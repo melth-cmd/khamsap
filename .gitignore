@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets
+.env
+
+# Tool output (regenerated, not source)
+*.cache.json
+*.th.srt
+*.report.txt
+
+# Keep *.bible.md and *.glossary.toml tracked: they are hand-edited.
