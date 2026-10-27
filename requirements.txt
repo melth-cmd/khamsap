@@ -1,0 +1,7 @@
+# Runtime
+srt>=3.5.3,<4
+charset-normalizer>=3.3
+openai>=1.30
+
+# Dev / test
+pytest>=8.0
