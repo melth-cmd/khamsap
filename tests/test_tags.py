@@ -150,3 +150,11 @@ def test_restore_non_strict_leaves_unknown_placeholder():
 def test_restore_no_tags_is_identity():
     protected = tags.protect("Hello")
     assert tags.restore("สวัสดี", protected) == "สวัสดี"
+
+
+def test_strip_markup_removes_tags_placeholders_and_music():
+    assert tags.strip_markup("<i>Hello {0}</i> ♪") == "Hello  "
+
+
+def test_strip_markup_leaves_plain_text_alone():
+    assert tags.strip_markup("Hello [door slams] - Hi.") == "Hello [door slams] - Hi."

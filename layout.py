@@ -78,8 +78,18 @@ def _lines(text: str) -> list[str]:
     return [line for line in text.split("\n") if line.strip()]
 
 
-def source_line_count(text: str) -> int:
+def line_count(text: str) -> int:
+    """Non-blank lines, the same count rewrap compares against."""
     return len(_lines(text))
+
+
+def source_line_count(text: str) -> int:
+    return line_count(text)
+
+
+def dash_count(text: str) -> int:
+    """How many non-blank lines start with a speaker dash (behind tags or not)."""
+    return sum(1 for line in _lines(text) if _dash_index(line) is not None)
 
 
 def rewrap(source: str, translated: str) -> Layout:

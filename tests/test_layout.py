@@ -244,3 +244,27 @@ def test_split_does_not_land_inside_a_music_marker():
 )
 def test_source_line_count(text, expected):
     assert layout.source_line_count(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [("One.", 1), ("One.\nTwo.", 2), ("A\n\n\nB", 2), ("  \n", 0)],
+)
+def test_line_count_is_the_non_blank_count(text, expected):
+    assert layout.line_count(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("- Hello.", 1),
+        ("- Hello.\n- Hi.", 2),
+        ("\u2013 Hello.\n\u2014 Hi.", 2),
+        ("<i>- Hello.</i>", 1),
+        ("{0}- Hello.", 1),
+        ("Hello.\nHi.", 0),
+        ("well-known.", 0),
+    ],
+)
+def test_dash_count_counts_speaker_dashes_only(text, expected):
+    assert layout.dash_count(text) == expected

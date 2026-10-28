@@ -284,12 +284,46 @@ Phase 3: Story bible and glossary
       Phase 3 complete.
 
 Phase 4: Verification
- 18. Leftover English, glossary consistency, tag mismatch (reading speed DROPPED: not a
+ 18. [x] Leftover English, glossary consistency, tag mismatch (reading speed DROPPED: not a
      priority, may add later - do not build it)
      Also report:
      - line count changed: a 2-line entry back as 1 line (not hypothetical: a model
        merged one in an early live run, on a file where a third of entries are multi-line).
      - speaker dashes lost: losing "- " on a turn blurs who speaks.
+     -> verify.py: Flag(index, kind, message, source, translation) and
+        Verification(flags, checked) with by_kind / entries / for_index; KINDS fixes the
+        order so a report looks the same every run. verify_file(translated, terms) takes
+        anything with .results + .sources (pipeline.TranslatedFile is one), never raises
+        on bad content, sorts by entry then kind, and logs (never flags) a result whose
+        source is missing.
+        check_entry() is the unit: ok=False -> one "failed" flag carrying the retry reason,
+        an empty translation -> "empty", and a non-verbal source ("Mm-hmm",
+        "[MUSIC PLAYING]") stops there so it is never nagged for staying untranslated.
+        Checks, each its own function: tag_mismatch (multiset of real tags, so a tag the
+        model dropped and restore could not put back is visible, and an invented {N} shows
+        as an extra tag), glossary_flags (keep -> word must still be there, else
+        "glossary_missing"; transliterate/translate -> th must appear, else
+        "glossary_inconsistent" when the English stayed, "glossary_missing" otherwise),
+        leftover_english (Latin words, apostrophes kept; words covered by ANY term are left
+        to the glossary check so a name is flagged once), length_flags (advisory:
+        MIN_LENGTH_RATIO 0.15 / MAX_LENGTH_RATIO 4.0, not applied below 4 source chars),
+        plus line_count and dashes_lost from layout.line_count / layout.dash_count.
+        -> layout.py: line_count() (non-blank) and dash_count() (dash behind tags counts);
+           source_line_count() now delegates to line_count().
+        -> tags.py: strip_markup() so word/length checks ignore tags, placeholders and
+           music notes.
+        -> pipeline.py: Prepared.sources keeps the text each entry came from (after HI
+           stripping, CRLF normalised, tags intact) and TranslatedFile.sources exposes the
+           ones that produced results, so verification needs nothing recomputed. Cached
+           entries carry their source too.
+        tests: 63 new = 563 passing (tests/test_verify.py 50, including six end-to-end
+        pipeline cases: sources kept, clean verify, failure flagged, HI-cleaned source,
+        cached rerun; 11 parametrised layout cases for line_count/dash_count; 2 tags).
+        Sanity check on a 9-entry realistic sample: only the name left in English without
+        a glossary term was flagged.
+        Known: length ratios are heuristics tuned for subtitles, not measured against a
+        corpus; english_left flags Latin text on purpose (a kept on-screen word needs a
+        "keep" term to be accepted).
  19. report.txt only, no auto-fix
 
 Phase 5: Extras
@@ -298,6 +332,8 @@ Phase 5: Extras
  22. Bilingual output option
  23. Other providers (different base URL + key env var)
  24. Saved settings are already covered by config.toml
+ 25. Easy to understand user manual
+ 26. Discuss options for GUI
 
 ### POST-PHASE-1: line breaks (A + D), agreed with user
 
@@ -340,8 +376,9 @@ Phase 5: Extras
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
 post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is complete
 (item 15 pre-pass, item 16 reload the files each run, item 17 per-batch glossary +
-cache keys). Next is Phase 4, item 18: the verification checks (report only, no
-auto-fix); item 19 writes report.txt.
+cache keys). Item 18 is done: verify.py holds the checks and the pipeline exposes the
+source text next to each result. Next is item 19: write report.txt and wire it into the
+CLI (report only, no auto-fix).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -364,6 +401,7 @@ Modules (one line each)
   bible      pre-pass: chunk the script, prompt + merge the notes, write both files
   glossary   terms: validate, render, parse, load; per-batch selection + cache fingerprint
   layout     rewrap translated text to the source line count (dash / proportional)
+  verify     check a finished file against its sources; returns flags, changes nothing
   pipeline   prepare -> batch -> translate -> restore -> rebuild -> write
   config     config.toml loading/validation, build_client
   translate  argparse CLI, multi-file pre-flight and run summary
@@ -383,11 +421,17 @@ Open threads carried forward
     old entries are repaired on read by layout.py, so bumping would have thrown away every
     cache for a layout fix.
   - No max chars-per-line rule exists. layout.py splits at the source's break points only.
-  - layout.py repairs line counts and speaker dashes; both are flagged per entry
-    (rewrapped / dashes_restored) for the item 18 report.
-  - report.txt is not written yet (item 19). Failures and rewraps live in
-    EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
-  - verify.py is still empty; bible.py and glossary.py are written (items 15-17).
+  - layout.py repairs line counts and speaker dashes; verify.py now flags any that
+    remain (line_count / dashes_lost), plus tags, glossary, leftover English, length,
+    empty and failed entries.
+  - Item 18 done: TranslatedFile.sources maps entry index -> the text it was translated
+    from (HI-stripped, tags intact), cached entries included. verify.verify_file(result,
+    terms) is the one call item 19 needs; Verification.by_kind / .entries are there for
+    the header and summary. Dropped-by-HI entries are not in results, so the report's
+    "dropped" count still has to come from TranslatedFile.dropped.
+  - report.txt is not written yet (item 19): report data (flags) exists, but nothing is
+    written and the CLI still prints "(see report in a later step)".
+  - bible.py and glossary.py are written (items 15-17); verify.py is written (item 18).
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;

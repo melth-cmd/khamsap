@@ -53,6 +53,7 @@ class Prepared:
 
     entries: list[SourceEntry] = field(default_factory=list)
     protected: dict[int, tags.ProtectedText] = field(default_factory=dict)
+    sources: dict[int, str] = field(default_factory=dict)
     dropped: list[int] = field(default_factory=list)
 
 
@@ -62,6 +63,9 @@ class TranslatedFile:
 
     subtitles: list[srt.Subtitle] = field(default_factory=list)
     results: list[EntryResult] = field(default_factory=list)
+    # The source text each result was translated from, after HI stripping and
+    # with formatting tags intact, so verification can compare the two.
+    sources: dict[int, str] = field(default_factory=dict)
     dropped: list[int] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
 
@@ -102,6 +106,7 @@ def prepare(subtitles: Sequence[srt.Subtitle], strip_hi: bool = False) -> Prepar
                 continue
             text = cleaned.text
 
+        prepared.sources[subtitle.index] = text
         protected = tags.protect(text)
         if not _has_words(protected.text):
             prepared.dropped.append(subtitle.index)
@@ -285,6 +290,12 @@ def translate_subtitles(
             cache.save()
 
     result.results.sort(key=lambda entry: entry.index)
+    # Verification compares each finished entry with the text it came from.
+    result.sources = {
+        entry.index: prepared.sources[entry.index]
+        for entry in result.results
+        if entry.index in prepared.sources
+    }
     result.subtitles = _rebuild(subtitles, result, prepared, selected_indexes)
     return result
 

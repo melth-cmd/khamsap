@@ -75,6 +75,15 @@ class TagMismatch(ValueError):
         super().__init__("; ".join(issue.message for issue in issues))
 
 
+def strip_markup(text: str) -> str:
+    """Text without formatting tags, placeholders or music notes.
+
+    For checks that care about words, not markup (verification compares the
+    English source with the Thai by their words).
+    """
+    return _PLACEHOLDER_RE.sub("", _TAG_RE.sub("", text))
+
+
 def protect(text: str) -> ProtectedText:
     """Replace formatting tags with numbered placeholders."""
     tags: list[Tag] = []
