@@ -168,3 +168,10 @@ key here:
     0   finished (lines left in English are still exit 0: check the report)
     1   a file failed with an error; the other files still ran
     2   a problem before any work: bad usage, bad config, missing file
+
+## Development
+
+The tests need `pytest`, which is not needed to run the tool:
+
+    uv pip install -r requirements-dev.txt
+    pytest -q

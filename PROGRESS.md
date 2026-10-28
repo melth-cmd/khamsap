@@ -511,7 +511,8 @@ item 24: discuss GUI options (the design still says GUI dropped, optional, proba
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
-  - Install deps:   uv pip install -r requirements.txt
+  - Install deps:   uv pip install -r requirements.txt       (runtime)
+                    uv pip install -r requirements-dev.txt   (adds pytest)
   - Tests:          .venv/bin/python -m pytest -q      (run from the project root;
                     pytest.ini sets pythonpath=. so imports resolve)
   - Live test:      pytest -m live     (excluded by default; needs OPENROUTER_API_KEY;
@@ -583,6 +584,11 @@ Open threads carried forward
     becomes necessary (different body/headers; not worth building speculatively).
   - Item 23 done: README.md is the user manual; SPEC's CLI list was corrected (no
     --strip-hi/--bilingual flags; strip_hi is config, bilingual is item 25 and warns).
+  - Housekeeping (after the item 24 discussion): runtime dependencies stay in
+    requirements.txt and pytest moved to requirements-dev.txt (which includes the runtime
+    file); README gained a short Development section. Ignored caches were deleted once
+    (__pycache__, tests/__pycache__, .pytest_cache, two fixture .cache.json artefacts from
+    old runs); they come back on the next run or pytest, which is normal.
   - Next: item 24, the GUI discussion (nothing to build unless the user asks; SPEC still
     says GUI dropped / probably never). Then item 25, bilingual output, parked for later.
   - Settings audit (old item 23, removed): everything worth saving is already in
