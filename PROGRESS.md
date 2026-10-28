@@ -133,7 +133,23 @@ Phase 2: Reliability polish
       FORMAT_VERSION 2. Version 1 caches are ignored and start empty (agreed with user: the
       existing translations were test artefacts, no migration written).
       tests/test_cache.py: 23 passing (288 total).
- 12. Rate-limit handling: jitter, Retry-After, timeouts
+ 12. [x] Rate-limit handling: jitter, Retry-After, timeouts
+      Most of the mechanism existed since step 5; this step closed the holes found by audit.
+      -> llm.py: RetryableError, the shared base of TransportError and RateLimited, both of
+         which carry .retry_after. 5xx and 408/409/425 now map to TransportError (retryable) instead
+         of the fatal LLMError, so a gateway hiccup no longer kills a whole run; 4xx stays fatal.
+         _retry_after() accepts seconds or an HTTP date, and ignores anything non-finite or
+         negative, so a junk header falls back to backoff instead of a weird sleep or a crash.
+      -> runner.py: one except llm.RetryableError block (was two copies) with _wait_for():
+         Retry-After wins over backoff, still capped at max_retry_after (120s); unusable hint
+         -> exponential backoff with +/-25% jitter. 429, 5xx and timeouts share one budget.
+         Rate-limit/transport retries now increment EntryResult.attempts (the report counted
+         only answered calls before).
+      Timeouts: SDK timeout from [llm] timeout_s (>= 1s, config), max_retries=0 on the SDK so
+      only the runner retries; now asserted in a test.
+      Not done on purpose: no jitter on the Retry-After path (only the server knows, and this
+      is a single-user tool, so there is no herd to spread); no separate connect timeout.
+      tests: 14 in test_llm.py, 8 in test_runner.py (311 total).
  13. Multi-line subtitles, speaker dashes, sound-effect brackets edge cases
  14. Multi-file batch processing
 
@@ -176,7 +192,7 @@ Phase 5: Extras
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
-post-phase line-break work). Phase 2: item 11 done, next is item 12 (rate limits/timeouts).
+post-phase line-break work). Phase 2: item 11 and 12 done, next is item 13 (multi-line/subtitle edge cases).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)

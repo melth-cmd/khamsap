@@ -205,6 +205,54 @@ def test_jitter_stays_within_bounds(fake_client):
     assert recorder.delays == [2.5]
 
 
+def test_server_error_with_retry_after_is_honoured(fake_client):
+    fake_client.queue(llm.TransportError("gateway", retry_after=3.0))
+    fake_client.queue("[1] สวัสดี")
+    result, recorder = run(batch_of([(1, "Hello.")]), fake_client)
+    assert recorder.delays == [3.0]
+    assert result.failures == []
+
+
+def test_server_error_with_retry_after_is_still_capped(fake_client):
+    fake_client.queue(llm.TransportError("gateway", retry_after=9999))
+    fake_client.queue("[1] สวัสดี")
+    _, recorder = run(batch_of([(1, "Hello.")]), fake_client)
+    assert recorder.delays == [120.0]
+
+
+@pytest.mark.parametrize("hint", [float("nan"), float("inf"), -5.0])
+def test_unusable_retry_after_falls_back_to_backoff(fake_client, hint):
+    fake_client.queue(llm.RateLimited("slow down", retry_after=hint))
+    fake_client.queue("[1] สวัสดี")
+    _, recorder = run(batch_of([(1, "Hello.")]), fake_client)
+    assert recorder.delays == [2.0]
+
+
+def test_zero_retry_after_retries_immediately(fake_client):
+    fake_client.queue(llm.RateLimited("slow down", retry_after=0))
+    fake_client.queue("[1] สวัสดี")
+    _, recorder = run(batch_of([(1, "Hello.")]), fake_client)
+    assert recorder.delays == [0.0]
+
+
+def test_rate_limit_retries_are_counted_as_attempts(fake_client):
+    fake_client.queue(llm.RateLimited("slow down", retry_after=1))
+    fake_client.queue(llm.TransportError("timeout"))
+    fake_client.queue("[1] สวัสดี")
+    result, _ = run(batch_of([(1, "Hello.")]), fake_client)
+    assert result.entries[0].attempts == 3
+
+
+def test_rate_limit_and_timeout_share_one_budget(fake_client):
+    fake_client.queue(llm.RateLimited("slow down", retry_after=1))
+    fake_client.queue(llm.TransportError("timeout"))
+    fake_client.queue(llm.RateLimited("slow down", retry_after=1))
+    result, recorder = run(batch_of([(1, "Hello.")]), fake_client, max_retries=2)
+    assert fake_client.call_count == 3
+    assert len(recorder.delays) == 2
+    assert result.failures[0].reason == "rate_limited"
+
+
 def test_exhausted_transport_fails_with_transport_reason(fake_client):
     for _ in range(2):
         fake_client.queue(llm.TransportError("timeout"))

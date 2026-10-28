@@ -14,6 +14,7 @@ Sleep and randomness are injected so tests can assert delays without waiting.
 from __future__ import annotations
 
 import logging
+import math
 import random
 import time
 from dataclasses import dataclass, field
@@ -65,6 +66,27 @@ def _backoff(
     """Exponential backoff with ±jitter, never longer than max_delay."""
     raw = min(base_delay * (2**attempt), max_delay)
     return max(0.0, raw * (1 + jitter * (2 * rand() - 1)))
+
+
+def _wait_for(
+    exc: llm.RetryableError,
+    attempt: int,
+    base_delay: float,
+    max_delay: float,
+    jitter: float,
+    max_retry_after: float,
+    rand: Callable[[], float],
+) -> float:
+    """How long to wait before retrying after a 429, 5xx or timeout.
+
+    A usable Retry-After wins over backoff, because only the server knows. It is
+    still capped, so a bad hint cannot stall the run. An absurd or malformed
+    value falls back to jittered exponential backoff.
+    """
+    hint = exc.retry_after
+    if hint is not None and math.isfinite(hint) and hint >= 0:
+        return min(hint, max_retry_after)
+    return _backoff(attempt, base_delay, max_delay, jitter, rand)
 
 
 def _add_usage(total: Usage, extra: Usage) -> Usage:
@@ -136,27 +158,20 @@ def translate_batch(
 
         try:
             completion = client.complete(messages, temperature=temperature)
-        except llm.RateLimited as exc:
+        except llm.RetryableError as exc:
+            # 429, 5xx, timeout, connection loss: the same shared budget as a
+            # validation failure, so one bad entry cannot spin forever.
+            reason = "rate_limited" if isinstance(exc, llm.RateLimited) else "transport"
+            for index in pending:
+                attempts[index] += 1
             if retries_used >= max_retries:
-                log.error("giving up after rate limit: %s", exc)
-                _mark_failed(result, batch, pending, attempts, reasons, "rate_limited")
+                log.error("giving up after %s: %s", reason, exc)
+                _mark_failed(result, batch, pending, attempts, reasons, reason)
                 break
-            delay = (
-                min(exc.retry_after, max_retry_after)
-                if exc.retry_after is not None
-                else _backoff(retries_used, base_delay, max_delay, jitter, rand)
+            delay = _wait_for(
+                exc, retries_used, base_delay, max_delay, jitter, max_retry_after, rand
             )
-            log.warning("rate limited, retrying in %.1fs", delay)
-            sleep(delay)
-            retries_used += 1
-            continue
-        except llm.TransportError as exc:
-            if retries_used >= max_retries:
-                log.error("giving up after transport failure: %s", exc)
-                _mark_failed(result, batch, pending, attempts, reasons, "transport")
-                break
-            delay = _backoff(retries_used, base_delay, max_delay, jitter, rand)
-            log.warning("transport failure, retrying in %.1fs", delay)
+            log.warning("%s, retrying in %.1fs", reason, delay)
             sleep(delay)
             retries_used += 1
             continue

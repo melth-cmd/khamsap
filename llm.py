@@ -17,9 +17,12 @@ from the environment only, and never logged, stored or rendered.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Mapping, Protocol, Sequence
 
 import tags
@@ -42,16 +45,23 @@ class LLMError(Exception):
     """Base class for anything that went wrong talking to the model."""
 
 
-class TransportError(LLMError):
-    """Network failure or timeout; worth retrying."""
+class RetryableError(LLMError):
+    """A failure that may go away by itself, so trying again is worth it.
 
-
-class RateLimited(LLMError):
-    """HTTP 429. `retry_after` is the server's hint in seconds, if given."""
+    `retry_after` is the server's hint in seconds, if it sent one.
+    """
 
     def __init__(self, message: str, retry_after: float | None = None):
         self.retry_after = retry_after
         super().__init__(message)
+
+
+class TransportError(RetryableError):
+    """Network failure, timeout or a 5xx from the server; worth retrying."""
+
+
+class RateLimited(RetryableError):
+    """HTTP 429."""
 
 
 class AuthError(LLMError):
@@ -357,15 +367,41 @@ def load_api_key(key_env: str = DEFAULT_KEY_ENV) -> str:
 
 
 def _retry_after(exc: Exception) -> float | None:
-    """Pull Retry-After off a failed response, if the server sent one."""
+    """Pull Retry-After off a failed response, if the server sent a usable one.
+
+    The header is either a number of seconds or an HTTP date. Anything that is
+    not a finite, non-negative delay is ignored, so a bad header can never turn
+    into a weird sleep or a crash.
+    """
     response = getattr(exc, "response", None)
     headers = getattr(response, "headers", None)
     if not headers:
         return None
-    try:
-        return float(headers.get("retry-after"))
-    except (TypeError, ValueError):
+    raw = headers.get("retry-after")
+    if raw is None:
         return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("latin-1", "replace")
+
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        seconds = None
+
+    if seconds is None:
+        try:
+            when = parsedate_to_datetime(str(raw))
+        except (TypeError, ValueError):
+            return None
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        seconds = (when - datetime.now(timezone.utc)).total_seconds()
+
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return seconds
 
 
 class OpenRouterClient:
@@ -422,6 +458,13 @@ class OpenRouterClient:
         except openai.APIConnectionError as exc:
             raise TransportError(f"connection failed: {exc}") from None
         except openai.APIStatusError as exc:
+            # 5xx and the "try again" 4xx codes are the gateway having a bad
+            # moment, not a bad request: retry them like a timeout.
+            if exc.status_code >= 500 or exc.status_code in {408, 409, 425}:
+                raise TransportError(
+                    f"OpenRouter returned HTTP {exc.status_code}",
+                    retry_after=_retry_after(exc),
+                ) from None
             raise LLMError(f"OpenRouter returned HTTP {exc.status_code}") from None
 
         choices = getattr(response, "choices", None) or []

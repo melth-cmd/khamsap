@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import re
 import tomllib
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -265,10 +267,64 @@ def test_connection_failure_becomes_transport_error():
         client.complete([])
 
 
-def test_server_error_becomes_llm_error():
+def test_server_error_is_retryable():
     client = client_raising(status_error(openai.InternalServerError, 500))
-    with pytest.raises(llm.LLMError):
+    with pytest.raises(llm.TransportError):
         client.complete([])
+
+
+@pytest.mark.parametrize("status", [502, 503, 504, 408, 409, 425])
+def test_transient_statuses_are_retryable(status):
+    cls = openai.InternalServerError if status >= 500 else openai.APIStatusError
+    client = client_raising(status_error(cls, status))
+    with pytest.raises(llm.TransportError):
+        client.complete([])
+
+
+def test_bad_request_stays_fatal():
+    client = client_raising(status_error(openai.BadRequestError, 400))
+    with pytest.raises(llm.LLMError) as excinfo:
+        client.complete([])
+    assert not isinstance(excinfo.value, llm.RetryableError)
+
+
+def test_unavailable_keeps_retry_after():
+    client = client_raising(status_error(openai.InternalServerError, 503, {"retry-after": "12"}))
+    with pytest.raises(llm.TransportError) as excinfo:
+        client.complete([])
+    assert excinfo.value.retry_after == 12.0
+
+
+@pytest.mark.parametrize("header", ["soon", "-5", "1e999", "nan", ""])
+def test_unusable_retry_after_is_ignored(header):
+    client = client_raising(status_error(openai.RateLimitError, 429, {"retry-after": header}))
+    with pytest.raises(llm.RateLimited) as excinfo:
+        client.complete([])
+    assert excinfo.value.retry_after is None
+
+
+def test_retry_after_accepts_an_http_date():
+    when = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+    client = client_raising(status_error(openai.RateLimitError, 429, {"retry-after": when}))
+    with pytest.raises(llm.RateLimited) as excinfo:
+        client.complete([])
+    assert 25 <= excinfo.value.retry_after <= 30
+
+
+def test_client_sets_timeout_and_leaves_retrying_to_us(monkeypatch):
+    import openai
+
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    llm.OpenRouterClient(model="m/x", api_key="test-key", timeout_s=42)
+    assert captured["timeout"] == 42
+    assert captured["max_retries"] == 0  # the runner owns the retry budget
+    assert captured["base_url"] == llm.DEFAULT_BASE_URL
 
 
 def test_empty_choices_is_bad_response():
