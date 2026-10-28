@@ -74,6 +74,11 @@ class TranslatedFile:
         return [result for result in self.results if result.rewrapped in {"dash", "proportional"}]
 
     @property
+    def restored_dashes(self) -> list[EntryResult]:
+        """Entries where a speaker dash the model dropped was put back."""
+        return [result for result in self.results if result.dashes_restored]
+
+    @property
     def translated(self) -> dict[int, str]:
         return {result.index: result.text for result in self.results}
 
@@ -86,7 +91,9 @@ def prepare(subtitles: Sequence[srt.Subtitle], strip_hi: bool = False) -> Prepar
     """
     prepared = Prepared()
     for subtitle in subtitles:
-        text = subtitle.content
+        # A stray carriage return would show up as a line break to the model but
+        # not to layout.py, which counts lines by "\n".
+        text = subtitle.content.replace("\r\n", "\n").replace("\r", "\n")
         if strip_hi:
             cleaned = hi.strip_hi(text)
             if cleaned.dropped:
@@ -170,6 +177,7 @@ def translate_subtitles(
                 ok=True,
                 from_cache=True,
                 rewrapped=fixed.method,
+                dashes_restored=fixed.dashes_restored,
             )
         )
 
@@ -221,6 +229,7 @@ def translate_subtitles(
                     reason=entry_result.reason,
                     attempts=entry_result.attempts,
                     rewrapped=fixed.method,
+                    dashes_restored=fixed.dashes_restored,
                 )
             )
             if entry_result.ok:

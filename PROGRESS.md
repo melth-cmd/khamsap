@@ -150,7 +150,31 @@ Phase 2: Reliability polish
       Not done on purpose: no jitter on the Retry-After path (only the server knows, and this
       is a single-user tool, so there is no herd to spread); no separate connect timeout.
       tests: 14 in test_llm.py, 8 in test_runner.py (311 total).
- 13. Multi-line subtitles, speaker dashes, sound-effect brackets edge cases
+ 13. [x] Multi-line subtitles, speaker dashes, sound-effect brackets edge cases
+      Survey first, on the PEN15 sample (179 entries, 76 multi-line after prepare):
+      47 all-dash, 48 with any dash, 0 blank-line entries, 0 dropped.
+      -> layout.py: DASHES = "-" + en dash + em dash, so turns in any dash style are found,
+         and a dash hidden behind a leading placeholder or HTML tag counts ({0}-Hello.,
+         <i>-Hello.</i>). layout runs AFTER tags.restore, so that second form is the common one.
+         The dash rule now fires when ANY source line is dashed (was: all), which fixes the
+         "But short? / -Yeah..." shape in the sample; 2 such entries exist.
+         _restore_dashes(): when EVERY source line is dashed and the model dropped one, put it
+         back in that source line's style (spaced or tight), after any leading tag. Reported
+         as Layout.dashes_restored -> EntryResult.dashes_restored -> TranslatedFile.restored_dashes.
+         Never invented for mixed sources; never on extra_lines.
+         Blank lines no longer count as lines (source_line_count and rewrap agree). Before, an
+         entry with a blank line asked for a line the source did not have and rewrap gave up.
+         Splits never land inside {N}, [brackets], (parens) or a music pair (6 of the 22
+         bracket/music entries had in-span split candidates with the old rule).
+      -> pipeline.prepare(): CRLF and bare CR normalised to LF, so layout counts the same lines
+         the model saw.
+      Evidence: identity rewrap is a no-op on all 179 sample entries. Worst case (model merges
+      AND drops every dash): all 76 multi-line entries get the right line count back, 47 get
+      their dashes restored, 0 remain merged. With dashes kept: 48 by the dash rule, 28
+      proportional.
+      tests: 14 new in test_layout.py, 5 in test_pipeline.py, plus fixtures/edge_cases.srt
+      (dash turn, dash behind <i>, mixed, music, sign) run end to end (333 total).
+      Not done: no chars-per-line limit; extra lines still only reported.
  14. Multi-file batch processing
 
 Phase 3: Story bible and glossary
@@ -192,7 +216,7 @@ Phase 5: Extras
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
-post-phase line-break work). Phase 2: item 11 and 12 done, next is item 13 (multi-line/subtitle edge cases).
+post-phase line-break work). Phase 2: items 11-13 done, next is item 14 (multi-file batch processing).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -225,6 +249,8 @@ Open threads carried into Phase 2
     old entries are repaired on read by layout.py, so bumping would have thrown away every
     cache for a layout fix.
   - No max chars-per-line rule exists. layout.py splits at the source's break points only.
+  - layout.py repairs line counts and speaker dashes; both are flagged per entry
+    (rewrapped / dashes_restored) for the item 18 report.
   - report.txt is not written yet (item 19). Failures and rewraps live in
     EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
   - verify.py, bible.py and glossary.py are still empty.

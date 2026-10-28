@@ -95,11 +95,19 @@ Core ideas:
     must have two lines"), which took the same sample to 12/12 correct.
 
     As a safety net, layout.py restores the source line count when the model ignores it:
-      - dash rule: when every source line starts with "-", split at inline " -" boundaries.
-        The dash is structural, so this recovers the speaker boundary exactly.
+      - dash rule: when any source line starts with a speaker dash (hyphen, en dash or
+        em dash) and the merged line has exactly the right number of inline turns, split
+        at those turns. The dash is structural, so this recovers the speaker boundary
+        exactly. A dash hidden behind a tag or a placeholder still counts ({0}-Hello.).
       - proportional rule: otherwise split at the space nearest each source break point,
-        scaled by source line lengths; three or more lines split at every point.
-    More lines than the source are accepted and reported, not trimmed.
+        scaled by source line lengths; three or more lines split at every point. A split
+        never lands inside a placeholder, a bracket or a music marker.
+    When every source line has a dash and the model dropped one, the dash is put back,
+    in the style of that source line ("- Hello." keeps its space, "-Hello." does not),
+    and reported as a restored dash. A source with only some dashed lines gets no
+    invented dashes, because there a dash could be a hyphen.
+    Blank lines inside an entry do not count as lines. More lines than the source are
+    accepted and reported, not trimmed.
 
     Re-wrapping happens on READ, including from cache, so entries merged by an older run
     are repaired without retranslating. Every repair is flagged for report.txt, which also

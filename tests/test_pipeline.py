@@ -181,6 +181,79 @@ def test_output_encoding_with_bom(tmp_path):
     assert target.read_bytes().startswith(b"\xef\xbb\xbf")
 
 
+# --- multi-line entries, dashes ---------------------------------------------
+
+
+def test_carriage_returns_are_normalised_before_batching():
+    prepared = pipeline.prepare([subtitle(1, "One.\r\nTwo.\rThree.")])
+    assert prepared.entries == [SourceEntry(1, "One.\nTwo.\nThree.")]
+
+
+def test_two_line_entry_keeps_two_lines_end_to_end():
+    from conftest import FakeClient
+
+    subtitles = [subtitle(1, "-Hello there.\n-Hi.")]
+    client = FakeClient(["[1] สวัสดีครับ\nหวัดดี"])
+    result = run(client, subtitles)
+
+    assert result.subtitles[0].content == "-สวัสดีครับ\n-หวัดดี"
+    assert result.restored_dashes[0].index == 1
+    assert result.restored_dashes[0].dashes_restored is True
+
+
+def test_restored_dashes_are_reported_from_cache_too(tmp_path):
+    from conftest import FakeClient
+
+    source = tmp_path / "dash.en.srt"
+    source.write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\n-Hello.\n-Hi.\n\n",
+        encoding="utf-8",
+    )
+    first = FakeClient(["[1] สวัสดี\nหวัดดี"])  # both dashes dropped
+    pipeline.translate_file(first, source, sleep=lambda s: None)
+
+    second = FakeClient()
+    result, _ = pipeline.translate_file(second, source, sleep=lambda s: None)
+    assert second.call_count == 0
+    assert result.restored_dashes[0].from_cache is True
+    assert result.subtitles[0].content == "-สวัสดี\n-หวัดดี"
+
+
+def test_edge_case_file_survives_a_merging_model(tmp_path):
+    """Real shapes from a HI-tagged release: turns, tags over a dash, music, signs."""
+    from conftest import FakeClient
+
+    # Every entry merged into one line and the speaker dashes dropped.
+    replies = [
+        "[1] แบบแซมเหรอ โอ๊ย พระเจ้า ฝันไปเถอะ\n"
+        "[2] {0}สาบานเลย{1} สาบาน\n"
+        "[3] แต่ว่าสั้นเหรอ -เออ ดูดีไหมล่ะ\n"
+        "[4] {0} ปล่อยไป {1} ปล่อยไป\n"
+        "[5] [SIGN: CLOSED] กลับมาพรุ่งนี้ ขอบคุณ"
+    ]
+    result, _ = pipeline.translate_file(
+        FakeClient(replies), FIXTURES / "edge_cases.srt", tmp_path / "out.srt",
+        sleep=lambda s: None,
+    )
+
+    contents = {s.index: s.content for s in result.subtitles}
+    assert contents[1] == "-แบบแซมเหรอ\n-โอ๊ย พระเจ้า ฝันไปเถอะ"
+    assert contents[2] == "<i>-สาบานเลย</i>\n-สาบาน"
+    assert contents[3] == "แต่ว่าสั้นเหรอ\n-เออ ดูดีไหมล่ะ"
+    assert contents[4].count("\n") == 1 and contents[4].startswith("\u266a")
+    assert contents[5].split("\n")[0].count("[") == contents[5].split("\n")[0].count("]")
+    assert len(result.restored_dashes) == 2  # entries 1 and 2
+    assert result.failures == []
+
+
+def test_entry_with_a_blank_line_is_rewrapped():
+    from conftest import FakeClient
+
+    client = FakeClient(["[1] หนึ่ง สอง"])
+    result = run(client, [subtitle(1, "One.\n\nTwo.")])
+    assert result.subtitles[0].content == "หนึ่ง\nสอง"
+
+
 def test_failure_list_is_exposed_for_the_report():
     from conftest import FakeClient
 
