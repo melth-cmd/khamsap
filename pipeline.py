@@ -26,6 +26,7 @@ import srt
 import batcher
 import cache as cache_module
 import hi
+import layout
 import llm
 import runner
 import srtio
@@ -66,6 +67,11 @@ class TranslatedFile:
     @property
     def failures(self) -> list[EntryResult]:
         return [result for result in self.results if not result.ok]
+
+    @property
+    def rewrapped(self) -> list[EntryResult]:
+        """Entries whose line breaks this program had to repair."""
+        return [result for result in self.results if result.rewrapped in {"dash", "proportional"}]
 
     @property
     def translated(self) -> dict[int, str]:
@@ -153,9 +159,18 @@ def translate_subtitles(
         if hit is None:
             pending.append(entry)
             continue
-        translated[entry.index] = hit
+        # Re-wrapped on read, so cached entries merged by an older run are fixed
+        # without paying to translate them again.
+        fixed = layout.rewrap(entry.text, hit)
+        translated[entry.index] = fixed.text
         result.results.append(
-            EntryResult(index=entry.index, text=hit, ok=True, from_cache=True)
+            EntryResult(
+                index=entry.index,
+                text=fixed.text,
+                ok=True,
+                from_cache=True,
+                rewrapped=fixed.method,
+            )
         )
 
     if cache is not None:
@@ -197,18 +212,22 @@ def translate_subtitles(
                 prepared.protected[entry_result.index],
                 strict=False,
             )
+            fixed = layout.rewrap(source_text[entry_result.index], restored)
             result.results.append(
                 EntryResult(
                     index=entry_result.index,
-                    text=restored,
+                    text=fixed.text,
                     ok=entry_result.ok,
                     reason=entry_result.reason,
                     attempts=entry_result.attempts,
+                    rewrapped=fixed.method,
                 )
             )
             if entry_result.ok:
-                translated[entry_result.index] = restored
+                translated[entry_result.index] = fixed.text
                 if cache is not None:
+                    # The cache keeps what the model actually said, so a later
+                    # improvement to re-wrapping can still be applied on read.
                     cache.put(
                         entry_result.index, source_text[entry_result.index], restored
                     )

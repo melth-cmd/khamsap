@@ -88,6 +88,24 @@ Core ideas:
 
 10. Cache, context, multi-file batching and --limit/--dry-run moved into early phases.
 
+11. Line breaks inside an entry are layout, so code repairs them.
+    Models treat a newline inside an entry as soft wrapping and merge lines: measured
+    4/4 merges on stacked lines before the prompt said anything about it. The prompt now
+    states the rule as a line count ("if the source entry has two lines, the translation
+    must have two lines"), which took the same sample to 12/12 correct.
+
+    As a safety net, layout.py restores the source line count when the model ignores it:
+      - dash rule: when every source line starts with "-", split at inline " -" boundaries.
+        The dash is structural, so this recovers the speaker boundary exactly.
+      - proportional rule: otherwise split at the space nearest each source break point,
+        scaled by source line lengths; three or more lines split at every point.
+    More lines than the source are accepted and reported, not trimmed.
+
+    Re-wrapping happens on READ, including from cache, so entries merged by an older run
+    are repaired without retranslating. Every repair is flagged for report.txt, which also
+    gives a merge rate to judge whether the prompt rule is working. Layout is never a
+    reason to fall back to English, and never a reason to spend a retry.
+
 
 ### TECH STACK
 
@@ -197,6 +215,8 @@ The system prompt must say:
 - On-screen text: translate, keep the brackets. (Sound-effect brackets only reach the
   model when strip_hi is off; with it on they were already removed from the source.)
 - Never merge or split entries. One input ID = one output ID.
+- Never merge or split the lines inside an entry: two source lines must come back as
+  two lines, three as three.
 - Context lines are for understanding only and must not appear in the output.
 
 Test 2-3 models on the same 60-line sample before committing. Thai quality varies a lot

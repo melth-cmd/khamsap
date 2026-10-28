@@ -264,6 +264,9 @@ Rules:
 - Idioms: translate the meaning, not the words.
 - On-screen text and sound effects: translate them, keep the brackets.
 - Never merge or split entries. One input ID = one output ID.
+- Preserve the line breaks inside an entry: if the source entry has two lines, the
+  translation must have two lines. Never merge lines, and never add a line that the
+  source did not have.
 - Lines under CONTEXT are for understanding only and must not appear in your output.
 - Placeholders such as {0} are formatting tags: keep every one, exactly once, in place.
 """

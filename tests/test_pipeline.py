@@ -345,3 +345,52 @@ def test_estimate_without_prices_is_free():
 def test_estimate_of_nothing_is_zero():
     estimate = pipeline.estimate([])
     assert (estimate.entries, estimate.batches, estimate.total_tokens) == (0, 0, 0)
+
+
+# --- line-break repair (A + D) ----------------------------------------------
+
+
+def test_merged_model_output_is_rewrapped():
+    from conftest import FakeClient
+
+    client = FakeClient(["[1] หนึ่ง สอง"])
+    result = run(client, [subtitle(1, "One.\nTwo.")])
+    assert result.subtitles[0].content.count("\n") == 1
+    assert result.results[0].rewrapped == "proportional"
+    assert result.failures == []
+
+
+def test_dash_speakers_are_split_at_the_dash():
+    from conftest import FakeClient
+
+    client = FakeClient(["[1] -หนึ่ง -สอง"])
+    result = run(client, [subtitle(1, "-One\n-Two")])
+    assert result.subtitles[0].content == "-หนึ่ง\n-สอง"
+    assert result.results[0].rewrapped == "dash"
+
+
+def test_cached_merged_entry_is_rewrapped_on_read(tmp_path):
+    from conftest import FakeClient
+    import cache as cache_module
+
+    store = cache_module.Cache(tmp_path / "c.cache.json", model="m")
+    store.put(1, "One.\nTwo.", "หนึ่ง สอง")  # merged by an older run
+    client = FakeClient()  # nothing may be requested
+    result = run(client, [subtitle(1, "One.\nTwo.")], cache=store)
+
+    assert client.call_count == 0
+    assert result.subtitles[0].content == "หนึ่ง\nสอง"
+    assert [r.index for r in result.rewrapped] == [1]
+
+
+def test_cache_stores_the_raw_model_output(tmp_path):
+    from conftest import FakeClient
+    import json
+    import cache as cache_module
+
+    store = cache_module.Cache(tmp_path / "c.cache.json", model="m")
+    run(FakeClient(["[1] หนึ่ง สอง"]), [subtitle(1, "One.\nTwo.")], cache=store)
+    store.save()
+
+    data = json.loads((tmp_path / "c.cache.json").read_text(encoding="utf-8"))
+    assert data["entries"]["1"]["text"] == "หนึ่ง สอง"  # un-rewrapped

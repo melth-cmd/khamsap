@@ -312,3 +312,9 @@ def test_live_smoke_translates_three_entries():
     assert set(decoded.entries) == {1, 2, 3}
     for index, text in decoded.entries.items():
         assert THAI_RE.search(text), f"entry {index} has no Thai: {text!r}"
+
+
+def test_system_prompt_states_the_line_count_rule():
+    prompt = llm.SYSTEM_PROMPT
+    assert "two lines" in prompt
+    assert "line breaks" in prompt.lower()

@@ -36,6 +36,7 @@ class EntryResult:
     reason: str | None = None
     attempts: int = 0
     from_cache: bool = False
+    rewrapped: str | None = None  # "dash" | "proportional" | "extra_lines"
 
 
 @dataclass

@@ -147,3 +147,17 @@ Phase 5: Extras
  22. Bilingual output option
  23. Other providers (different base URL + key env var)
  24. Saved settings are already covered by config.toml
+
+### POST-PHASE-1: line breaks (A + D), agreed with user
+
+  -> layout.py: rewrap(source, translated) -> Layout(text, method), method is
+     "dash" / "proportional" / "extra_lines" / None. pipeline applies it on READ
+     (cached entries included) and flags the result in EntryResult.rewrapped.
+  Prompt: llm.SYSTEM_PROMPT now states the rule as a line count.
+  Evidence: before the prompt line, stacked lines merged 4/4 and dashed 2/4 in live runs.
+  After, 4 runs x 3 entries (2-line plain, 2-line dash, 3-line) kept the right count 12/12.
+  Cache stores the RAW model output, so improving re-wrapping later still applies without
+  retranslating. PROMPT_VERSION deliberately NOT bumped for this: old merged entries are
+  repaired on read, and bumping would throw away every cache for a layout fix.
+  Not implemented on purpose: max chars per line (no convention chosen yet); lines are
+  split at the source's break points, not to a width.
