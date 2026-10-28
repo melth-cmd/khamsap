@@ -179,3 +179,84 @@ def test_context_is_not_part_of_the_output(project, fake):
     output = srtio.load_srt(project / "sample.th.srt")
     assert [s.index for s in output.subtitles] == [1, 2, 3]
     assert [s.content for s in output.subtitles] == ["สวัสดี", "สบายดีไหม", "<i>สบายดี</i>"]
+
+
+# --- limit / range / dry-run (step 10) --------------------------------------
+
+
+def test_limit_translates_only_the_first_n(project, fake):
+    fake.queue("[1] สวัสดี")
+    status = translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml"), "--limit", "1"]
+    )
+    assert status == 0
+    assert fake.call_count == 1
+    output = srtio.load_srt(project / "sample.th.srt")
+    assert [s.index for s in output.subtitles] == [1]
+
+
+def test_range_writes_only_that_slice(project, fake):
+    fake.queue("[2] สบายดีไหม")
+    status = translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml"),
+         "--range", "2-2"]
+    )
+    assert status == 0
+    assert fake.call_count == 1
+    output = srtio.load_srt(project / "sample.th.srt")
+    assert [s.index for s in output.subtitles] == [2]
+    assert output.subtitles[0].content == "สบายดีไหม"
+
+
+def test_range_still_sees_context_outside_the_slice(project, fake):
+    fake.queue("[2] สบายดีไหม")
+    translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml"),
+         "--range", "2-2"]
+    )
+    prompt = fake.calls[0][1]["content"]
+    assert "[1] Hello there." in prompt      # before
+    assert "Fine, thanks." in prompt          # after
+
+
+def test_empty_range_writes_an_empty_file(project, fake):
+    status = translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml"),
+         "--range", "90-99"]
+    )
+    assert status == 0
+    assert fake.call_count == 0
+
+
+def test_bad_range_is_rejected(project, fake, capsys):
+    status = translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml"),
+         "--range", "9-2"]
+    )
+    assert status == 2
+    assert "after its end" in capsys.readouterr().err
+
+
+def test_negative_limit_is_rejected(project, fake, capsys):
+    status = translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml"),
+         "--limit", "-1"]
+    )
+    assert status == 2
+    assert "negative" in capsys.readouterr().err
+
+
+def test_dry_run_needs_no_key_and_builds_no_client(project, monkeypatch, capsys):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("dry run must not build a client")
+
+    monkeypatch.setattr(config, "build_client", boom)
+    status = translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml"), "--dry-run"]
+    )
+    out = capsys.readouterr().out
+    assert status == 0
+    assert "3 entries in 1 batch" in out  # default size 60 fits the whole file
+    assert "tokens" in out and "$" in out

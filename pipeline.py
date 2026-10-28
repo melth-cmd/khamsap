@@ -112,12 +112,18 @@ def translate_subtitles(
     bible: str = "",
     glossary: str = "",
     cache: cache_module.Cache | None = None,
+    limit: int | None = None,
+    range_: str | tuple[int, int] | None = None,
     **runner_kwargs,
 ) -> TranslatedFile:
     """Translate a whole file, batch by batch, keeping timestamps intact.
 
     With a cache, entries already translated are not sent again; they still
     count as context, so resumed batches see the same Thai they would have.
+
+    With `limit` or `range_`, only those entries are translated and written.
+    Context is still drawn from the whole file, so a slice is translated with
+    the surrounding lines in view.
     """
     prepared = prepare(subtitles, strip_hi=strip_hi)
     result = TranslatedFile(dropped=list(prepared.dropped))
@@ -126,10 +132,23 @@ def translate_subtitles(
         log.info("Nothing to translate")
         return result
 
+    selected = batcher.select_range(prepared.entries, limit=limit, range_=range_)
+    selected_indexes = {entry.index for entry in selected}
+    if not selected:
+        log.warning("Selection is empty; nothing to translate")
+        return result
+    if len(selected) < len(prepared.entries):
+        log.info(
+            "Translating %d of %d entr%s", len(selected), len(prepared.entries),
+            "y" if len(prepared.entries) == 1 else "ies",
+        )
+
     translated: dict[int, str] = {}
     pending: list[SourceEntry] = []
 
     for entry in prepared.entries:
+        if entry.index not in selected_indexes:
+            continue
         hit = cache.get(entry.index, entry.text) if cache is not None else None
         if hit is None:
             pending.append(entry)
@@ -140,10 +159,11 @@ def translate_subtitles(
         )
 
     if cache is not None:
+        cached = len(selected) - len(pending)
         log.info(
             "%d entr%s already cached, %d to translate",
-            len(prepared.entries) - len(pending),
-            "y" if len(prepared.entries) - len(pending) == 1 else "ies",
+            cached,
+            "y" if cached == 1 else "ies",
             len(pending),
         )
 
@@ -198,22 +218,29 @@ def translate_subtitles(
             cache.save()
 
     result.results.sort(key=lambda entry: entry.index)
-    result.subtitles = _rebuild(subtitles, result, prepared)
+    result.subtitles = _rebuild(subtitles, result, prepared, selected_indexes)
     return result
 
 
 def _rebuild(
-    subtitles: Sequence[srt.Subtitle], result: TranslatedFile, prepared: Prepared
+    subtitles: Sequence[srt.Subtitle],
+    result: TranslatedFile,
+    prepared: Prepared,
+    included: set[int],
 ) -> list[srt.Subtitle]:
-    """Put translated text back into the original entries, timestamps and all."""
+    """Put translated text back into the original entries, timestamps and all.
+
+    Entries outside the selection (--range / --limit) are left out entirely, so
+    a slice produces a file holding just that slice.
+    """
     by_index = {entry.index: entry for entry in result.results}
     rebuilt: list[srt.Subtitle] = []
 
     for subtitle in subtitles:
-        if subtitle.index in prepared.dropped:
+        if subtitle.index in prepared.dropped or subtitle.index not in included:
             continue
         entry = by_index.get(subtitle.index)
-        if entry is None:  # pragma: no cover - every prepared entry has a result
+        if entry is None:  # pragma: no cover - every selected entry has a result
             log.error("Entry [%d] has no result, keeping the original", subtitle.index)
             rebuilt.append(subtitle)
             continue
@@ -227,6 +254,76 @@ def _rebuild(
             )
         )
     return rebuilt
+
+
+# Rough character-per-token ratios. English input runs about 4; Thai output is
+# token-expensive, so it gets a lower number. Good enough for --dry-run, which
+# only needs the order of magnitude.
+CHARS_PER_PROMPT_TOKEN = 3.2
+CHARS_PER_COMPLETION_TOKEN = 2.2
+PROMPT_OVERHEAD_CHARS = 40  # section labels and [ID] prefixes
+
+
+@dataclass
+class Estimate:
+    """What a run would cost, without making it."""
+
+    entries: int = 0
+    batches: int = 0
+    dropped: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+def estimate(
+    subtitles: Sequence[srt.Subtitle],
+    strip_hi: bool = False,
+    size: int = 60,
+    context_before: int = 4,
+    context_after: int = 2,
+    limit: int | None = None,
+    range_: str | tuple[int, int] | None = None,
+    input_usd_per_mtok: float = 0.0,
+    output_usd_per_mtok: float = 0.0,
+) -> Estimate:
+    """Predict batch count, tokens and cost for a run, with no API calls."""
+    prepared = prepare(subtitles, strip_hi=strip_hi)
+    selected = batcher.select_range(prepared.entries, limit=limit, range_=range_)
+    batches = batcher.make_batches(
+        prepared.entries,
+        selection=selected,
+        size=size,
+        context_before=context_before,
+        context_after=context_after,
+    )
+
+    prompt_chars = completion_chars = 0
+    for batch in batches:
+        prompt_chars += len(llm.SYSTEM_PROMPT) + PROMPT_OVERHEAD_CHARS
+        prompt_chars += sum(len(item.text) for item in batch.items)
+        prompt_chars += sum(len(line.text) + len(line.thai or "") for line in batch.before)
+        prompt_chars += sum(len(line.text) for line in batch.after)
+        completion_chars += sum(len(item.text) for item in batch.items)
+
+    prompt_tokens = int(prompt_chars / CHARS_PER_PROMPT_TOKEN)
+    completion_tokens = int(completion_chars / CHARS_PER_COMPLETION_TOKEN)
+    cost = (
+        prompt_tokens / 1e6 * input_usd_per_mtok
+        + completion_tokens / 1e6 * output_usd_per_mtok
+    )
+    return Estimate(
+        entries=len(selected),
+        batches=len(batches),
+        dropped=len(prepared.dropped),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=cost,
+    )
 
 
 def translate_file(

@@ -301,3 +301,47 @@ def test_changed_source_line_is_retranslated(tmp_path):
     assert client.call_count == 1
     assert result.translated[2] == "ไปไหนมา"
     assert result.translated[1] == "สวัสดี"
+
+
+# --- estimate (dry run) -----------------------------------------------------
+
+
+def test_estimate_counts_entries_and_batches():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    estimate = pipeline.estimate(loaded.subtitles, size=2)
+    assert estimate.entries == 3
+    assert estimate.batches == 2
+    assert estimate.total_tokens > 0
+
+
+def test_estimate_honours_a_range():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    estimate = pipeline.estimate(loaded.subtitles, range_="2-3")
+    assert estimate.entries == 2
+    assert estimate.batches == 1
+
+
+def test_estimate_counts_dropped_entries():
+    subtitles = [subtitle(1, "[door slams]"), subtitle(2, "Hello.")]
+    estimate = pipeline.estimate(subtitles, strip_hi=True)
+    assert estimate.entries == 1
+    assert estimate.dropped == 1
+
+
+def test_estimate_cost_uses_the_configured_prices():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    estimate = pipeline.estimate(
+        loaded.subtitles, input_usd_per_mtok=1.0, output_usd_per_mtok=1.0
+    )
+    expected = (estimate.prompt_tokens + estimate.completion_tokens) / 1e6
+    assert estimate.cost_usd == pytest.approx(expected)
+
+
+def test_estimate_without_prices_is_free():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    assert pipeline.estimate(loaded.subtitles).cost_usd == 0.0
+
+
+def test_estimate_of_nothing_is_zero():
+    estimate = pipeline.estimate([])
+    assert (estimate.entries, estimate.batches, estimate.total_tokens) == (0, 0, 0)

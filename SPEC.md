@@ -233,8 +233,13 @@ proposes corrections (written to the report, applied only with --fix).
 
   python translate.py input.en.srt            -> input.th.srt
   python translate.py *.srt                   multiple files (simple loop)
-  --limit N / --range A-B                     translate only part of the file (dev/testing)
+  --limit N / --range A-B                     translate only part of the file (dev/testing).
+                                              --range uses real SRT indexes, inclusive. The output
+                                              file holds only the selected entries; context is
+                                              still read from the whole file. Not merged into a
+                                              previous full translation.
   --dry-run                                   show batch count and estimated tokens/cost, no API calls
+                                              and no API key needed
   --bible-only                                build bible + glossary, then stop
   --strip-hi                                  drop [sound effects]/(descriptions) from output
   --fix, --review                             see Verification

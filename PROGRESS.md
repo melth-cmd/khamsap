@@ -102,7 +102,17 @@ Phase 1: Core translator, command line
       Verified by tests/test_translate.py: context counts come from config, first batch has
       no before-block, before-lines carry "TH:", after-lines never do, and context lines
       never appear in the output file (233 tests passing).
- 10. --limit/--range and --dry-run
+ 10. [x] --limit/--range and --dry-run
+      -> pipeline.estimate() + limit/range_ params on translate_subtitles/translate_file;
+         translate.py flags --limit, --range, --dry-run.
+      --range uses real SRT indexes, inclusive, validated before any work starts. Output holds
+      only the selected entries (no merging); context still comes from the whole file.
+      --dry-run builds no client, needs no key, and prints entries, batches, ~tokens and ~cost
+      using [llm] input/output_usd_per_mtok. Token estimate is chars/3.2 input and chars/2.2
+      output, labelled approximate.
+      tests: 15 new (246 total). Live: dry-run without a key reports 3 entries / 1 batch /
+      ~$0.0001; --range 3-3 wrote a one-entry file from cache at 0 tokens.
+      Phase 1 complete.
  Test on a tiny sample first.
 
 Phase 2: Reliability polish
