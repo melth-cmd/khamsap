@@ -1,0 +1,306 @@
+from __future__ import annotations
+
+import os
+import re
+import tomllib
+from pathlib import Path
+from types import SimpleNamespace
+
+import openai
+import pytest
+
+# openai 3.x ships httpx2; older releases use httpx. Only used to build fake
+# error responses, never for real requests.
+try:
+    import httpx2 as httpx
+except ImportError:  # pragma: no cover
+    import httpx
+
+import llm
+from batcher import ContextLine, SourceEntry, make_batches
+from helpers import make_batch
+
+THAI_RE = re.compile(r"[\u0e00-\u0e7f]")
+CONFIG = Path(__file__).parent.parent / "config.toml"
+
+
+# --- encode -----------------------------------------------------------------
+
+
+def test_encode_entries():
+    entries = [SourceEntry(12, "Hello there."), SourceEntry(13, "Fine.")]
+    assert llm.encode_entries(entries) == "[12] Hello there.\n[13] Fine."
+
+
+def test_encode_keeps_multiline_entries():
+    entries = [SourceEntry(1, "Hello there.\nHow are you?")]
+    assert llm.encode_entries(entries) == "[1] Hello there.\nHow are you?"
+
+
+def test_encode_empty_batch():
+    assert llm.encode_entries([]) == ""
+
+
+# --- decode -----------------------------------------------------------------
+
+
+def test_decode_simple_reply():
+    decoded = llm.decode_entries("[12] สวัสดี\n[13] สบายดี")
+    assert decoded.entries == {12: "สวัสดี", 13: "สบายดี"}
+    assert decoded.issues == []
+
+
+def test_decode_joins_continuation_lines():
+    decoded = llm.decode_entries("[1] สวัสดี\nHow are you?\n[2] จบ")
+    assert decoded.entries[1] == "สวัสดี\nHow are you?"
+    assert decoded.entries[2] == "จบ"
+
+
+def test_decode_ignores_text_before_the_first_entry():
+    decoded = llm.decode_entries("Here you go:\n[1] สวัสดี")
+    assert decoded.entries == {1: "สวัสดี"}
+
+
+def test_decode_reports_duplicate_and_keeps_first():
+    decoded = llm.decode_entries("[1] แรก\n[1] สอง")
+    assert decoded.entries == {1: "แรก"}
+    assert [i.kind for i in decoded.issues] == ["duplicate"]
+
+
+def test_decode_reports_empty_entry():
+    decoded = llm.decode_entries("[1] สวัสดี\n[2]   \n[3] จบ")
+    assert decoded.entries[2] == ""
+    assert [(i.kind, i.index) for i in decoded.issues] == [("empty", 2)]
+
+
+def test_decode_raises_when_nothing_is_tagged():
+    with pytest.raises(llm.BadResponse):
+        llm.decode_entries("I cannot help with that.")
+
+
+def test_decode_roundtrip_between_encode_and_decode():
+    entries = [SourceEntry(5, "One."), SourceEntry(6, "Two.\nSecond line.")]
+    decoded = llm.decode_entries(llm.encode_entries(entries) + "\n")
+    assert decoded.entries == {5: "One.", 6: "Two.\nSecond line."}
+
+
+def test_decode_tolerates_windows_line_endings():
+    decoded = llm.decode_entries("[1] สวัสดี\r\n[2] จบ\r\n")
+    assert decoded.entries == {1: "สวัสดี", 2: "จบ"}
+
+
+# --- prompt -----------------------------------------------------------------
+
+
+def test_build_messages_has_system_and_user():
+    messages = llm.build_messages(make_batch(2))
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert messages[0]["content"] == llm.SYSTEM_PROMPT
+
+
+def test_build_messages_contains_tagged_entries():
+    user = llm.build_messages(make_batch(2))[1]["content"]
+    assert "[TRANSLATE]" in user
+    assert "[1] Line 1" in user
+    assert "[2] Line 2" in user
+
+
+def test_build_messages_omits_empty_bible_and_glossary():
+    user = llm.build_messages(make_batch(1))[1]["content"]
+    assert "STORY BIBLE" not in user
+    assert "GLOSSARY" not in user
+
+
+def test_build_messages_includes_bible_and_glossary():
+    user = llm.build_messages(make_batch(1), bible="A space film.", glossary="NASA = keep")[1]["content"]
+    assert "[STORY BIBLE]\nA space film." in user
+    assert "[GLOSSARY]\nNASA = keep" in user
+
+
+def test_build_messages_marks_context_as_untranslatable():
+    batch = make_batch(2)
+    batch.before = [ContextLine(0, "Earlier.")]
+    batch.after = [ContextLine(3, "Later.")]
+    user = llm.build_messages(batch)[1]["content"]
+    assert "[CONTEXT BEFORE - do not translate]" in user
+    assert "[CONTEXT AFTER - do not translate]" in user
+
+
+def test_build_messages_includes_thai_in_before_context_only():
+    batch = make_batch(2)
+    batch.before = [ContextLine(0, "Earlier.", thai="ก่อนหน้านี้")]
+    batch.after = [ContextLine(3, "Later.", thai=None)]
+    user = llm.build_messages(batch)[1]["content"]
+    before_block, after_block = user.split("[CONTEXT AFTER - do not translate]")
+    assert "TH: ก่อนหน้านี้" in before_block
+    assert "TH:" not in after_block
+
+
+def test_system_prompt_states_the_core_rules():
+    prompt = llm.SYSTEM_PROMPT
+    assert "Thai" in prompt
+    assert "One input ID = one output ID" in prompt
+    assert "must not appear in your output" in prompt
+    assert "{0}" in prompt
+
+
+# --- api key ----------------------------------------------------------------
+
+
+def test_load_api_key_reads_environment(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
+    assert llm.load_api_key() == "sk-test-123"
+
+
+def test_load_api_key_strips_whitespace(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "  sk-test-123\n")
+    assert llm.load_api_key() == "sk-test-123"
+
+
+def test_load_api_key_custom_env_name(monkeypatch):
+    monkeypatch.setenv("OTHER_PROVIDER_KEY", "abc")
+    assert llm.load_api_key("OTHER_PROVIDER_KEY") == "abc"
+
+
+def test_load_api_key_missing_raises_auth_error(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(llm.AuthError) as excinfo:
+        llm.load_api_key()
+    assert "OPENROUTER_API_KEY" in str(excinfo.value)
+
+
+def test_missing_key_message_never_contains_a_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    with pytest.raises(llm.AuthError) as excinfo:
+        llm.load_api_key()
+    assert "sk-" not in str(excinfo.value)
+
+
+# --- error mapping ----------------------------------------------------------
+
+
+def status_error(cls, status: int, headers: dict | None = None):
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    response = httpx.Response(status, headers=headers or {}, request=request)
+    return cls("boom", response=response, body=None)
+
+
+def client_raising(exc: Exception) -> llm.OpenRouterClient:
+    """An OpenRouterClient whose SDK call always fails with `exc`."""
+    client = object.__new__(llm.OpenRouterClient)
+    client.model = "test/model"
+    client.temperature = 0.25
+
+    def create(**kwargs):
+        raise exc
+
+    client._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    return client
+
+
+def client_returning(content: str, prompt_tokens: int = 7, completion_tokens: int = 5):
+    client = object.__new__(llm.OpenRouterClient)
+    client.model = "test/model"
+    client.temperature = 0.25
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        usage=SimpleNamespace(
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+        ),
+    )
+    client._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw: response))
+    )
+    return client
+
+
+def test_complete_returns_text_and_usage():
+    completion = client_returning("[1] สวัสดี").complete([{"role": "user", "content": "x"}])
+    assert completion.text == "[1] สวัสดี"
+    assert completion.usage.prompt_tokens == 7
+    assert completion.usage.completion_tokens == 5
+
+
+def test_rate_limit_becomes_rate_limited_with_retry_after():
+    client = client_raising(status_error(openai.RateLimitError, 429, {"retry-after": "7"}))
+    with pytest.raises(llm.RateLimited) as excinfo:
+        client.complete([])
+    assert excinfo.value.retry_after == 7.0
+
+
+def test_rate_limit_without_header_has_no_retry_after():
+    client = client_raising(status_error(openai.RateLimitError, 429))
+    with pytest.raises(llm.RateLimited) as excinfo:
+        client.complete([])
+    assert excinfo.value.retry_after is None
+
+
+def test_auth_failure_becomes_auth_error():
+    client = client_raising(status_error(openai.AuthenticationError, 401))
+    with pytest.raises(llm.AuthError):
+        client.complete([])
+
+
+def test_timeout_becomes_transport_error():
+    client = client_raising(openai.APITimeoutError(request=httpx.Request("POST", "https://x")))
+    with pytest.raises(llm.TransportError):
+        client.complete([])
+
+
+def test_connection_failure_becomes_transport_error():
+    client = client_raising(
+        openai.APIConnectionError(request=httpx.Request("POST", "https://x"))
+    )
+    with pytest.raises(llm.TransportError):
+        client.complete([])
+
+
+def test_server_error_becomes_llm_error():
+    client = client_raising(status_error(openai.InternalServerError, 500))
+    with pytest.raises(llm.LLMError):
+        client.complete([])
+
+
+def test_empty_choices_is_bad_response():
+    client = object.__new__(llm.OpenRouterClient)
+    client.model, client.temperature = "test/model", 0.25
+    response = SimpleNamespace(choices=[], usage=None)
+    client._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw: response))
+    )
+    with pytest.raises(llm.BadResponse):
+        client.complete([])
+
+
+# --- live -------------------------------------------------------------------
+
+
+@pytest.mark.live
+def test_live_smoke_translates_three_entries():
+    """Real OpenRouter call. Run with: pytest -m live"""
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        pytest.skip("OPENROUTER_API_KEY not set")
+
+    settings = tomllib.loads(CONFIG.read_text())["llm"]
+    client = llm.OpenRouterClient(
+        model=settings["model"],
+        base_url=settings["base_url"],
+        temperature=settings["temperature"],
+        timeout_s=settings["timeout_s"],
+        key_env=settings["key_env"],
+    )
+
+    entries = [
+        SourceEntry(1, "Hello there."),
+        SourceEntry(2, "How are you?"),
+        SourceEntry(3, "<i>Fine, thanks.</i>"),
+    ]
+    batch = make_batches(entries, size=3)[0]
+    reply = client.complete(llm.build_messages(batch))
+    decoded = llm.decode_entries(reply.text)
+
+    assert set(decoded.entries) == {1, 2, 3}
+    for index, text in decoded.entries.items():
+        assert THAI_RE.search(text), f"entry {index} has no Thai: {text!r}"

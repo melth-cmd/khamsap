@@ -34,7 +34,15 @@ Phase 1: Core translator, command line
       Context is not counted toward batch size. Real SRT indexes for --range (inclusive).
       Bad size/context/selection raise instead of looping or silently dropping entries.
       tests/test_batcher.py: 41 passing (100 total).
- 4. Tagged-line wire format; send to OpenRouter; decode
+ 4. [x] Tagged-line wire format; send to OpenRouter; decode
+      -> llm.py: encode_entries / decode_entries / build_messages / load_api_key / OpenRouterClient
+      Wire format is "[12] text", continuation lines join the entry above; duplicates keep the
+      first copy and are reported, empty entries and untagged replies are reported, not crashed on.
+      Errors are typed: TransportError, RateLimited (with .retry_after), AuthError, BadResponse.
+      SDK retries are disabled (max_retries=0); retrying is step 5's job.
+      Key comes from the environment only, read via load_api_key() at run time, never logged.
+      tests/conftest.py FakeClient + tests/helpers.py; tests/test_llm.py: 31 passing (131 total).
+      Live check (costs money, needs the key): pytest -m live  # skipped unless OPENROUTER_API_KEY is set
  5. Validate by ID; retry only failed entries with backoff and Retry-After
  6. Reassemble with original timestamps; write .th.srt (UTF-8, optional BOM)
  7. API key from env var; model and settings in config.toml
