@@ -26,7 +26,14 @@ Phase 1: Core translator, command line
       .dropped means no letters/digits remain, i.e. the entry must be omitted from output.
       tests/test_hi.py: 17 passing. SPEC.md updated: design item 4, config [cleanup],
       prompt rules, --strip-hi flag and verification note.
- 3. Split into ~60-entry batches, never mid-entry
+ 3. [x] Split into ~60-entry batches, never mid-entry
+      -> batcher.py: SourceEntry / ContextLine / Batch, select_range, parse_range, make_batches
+      entries = full cleaned file (context source); selection = what to translate this run.
+      Context comes from the full list, so --range still sees lines outside its window;
+      before-lines carry Thai when `translated` supplies it, after-lines never do.
+      Context is not counted toward batch size. Real SRT indexes for --range (inclusive).
+      Bad size/context/selection raise instead of looping or silently dropping entries.
+      tests/test_batcher.py: 41 passing (100 total).
  4. Tagged-line wire format; send to OpenRouter; decode
  5. Validate by ID; retry only failed entries with backoff and Retry-After
  6. Reassemble with original timestamps; write .th.srt (UTF-8, optional BOM)
