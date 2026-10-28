@@ -12,6 +12,7 @@ import config
 import glossary
 import srtio
 import translate
+import verify
 from conftest import FakeClient
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -833,3 +834,126 @@ def test_dry_run_counts_the_glossary(project, fake, capsys):
 
     assert with_terms > without
     assert fake.call_count == 0
+
+
+# --- report.txt (step 19) ---------------------------------------------------
+
+# sample.en.srt has three entries: "Hello there.", "How are you?", <i>Fine, thanks.</i>
+CLEAN_REPORT = "Checked 3 entries; nothing flagged."
+
+
+def test_a_run_writes_a_report_beside_the_source(project, fake, capsys):
+    fake.queue(REPLIES)
+    status = run(project, fake, project / "sample.en.srt")
+
+    report = project / "sample.report.txt"
+    assert status == 0
+    assert report.exists()
+    text = report.read_text(encoding="utf-8")
+    assert "Translation report" in text
+    assert "source:  sample.en.srt" in text
+    assert "output:  sample.th.srt" in text
+    assert "model:   test/model" in text
+    assert CLEAN_REPORT in text
+    assert "Each flag" not in text
+
+
+def test_the_report_path_is_printed(project, fake, capsys):
+    fake.queue(REPLIES)
+    run(project, fake, project / "sample.en.srt")
+    err = capsys.readouterr().err
+    assert "report: " in err
+    assert "sample.report.txt" in err
+
+
+def test_the_report_lists_failed_entries(project, fake, capsys):
+    # Entry 2 leaks Chinese, so it is retried and finally left in English.
+    fake.queue("[1] สวัสดี\n[2] 你好\n[3] {0}สบายดี{1}").queue("[2] 你好").queue("[2] 你好").queue("[2] 你好")
+    status = run(project, fake, project / "sample.en.srt")
+
+    text = (project / "sample.report.txt").read_text(encoding="utf-8")
+    assert status == 0
+    assert "Checked 3 entries, flagged 1 entry." in text
+    assert "Flags: failed 1" in text
+    assert "[2] failed" in text
+    assert "left in English" in text
+    assert "How are you?" in text
+
+
+def test_the_report_follows_the_source_not_a_custom_output(project, fake):
+    target = project / "custom.srt"
+    fake.queue(REPLIES)
+    run(project, fake, project / "sample.en.srt", "--output", target)
+
+    assert target.exists()
+    assert (project / "sample.report.txt").exists()
+    assert "output:  custom.srt" in (project / "sample.report.txt").read_text(encoding="utf-8")
+
+
+def test_each_file_in_a_multi_file_run_gets_a_report(project, fake):
+    fake.queue(REPLIES).queue(REPLIES)
+    status = run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"))
+
+    assert status == 0
+    assert (project / "a.report.txt").exists()
+    assert (project / "b.report.txt").exists()
+
+
+def test_the_report_does_not_change_the_translation(project, fake):
+    fake.queue("[1] สวัสดี\n[2] สบายดีไหม\n[3] {0}ok นะ{1}")
+    run(project, fake, project / "sample.en.srt")
+
+    out = srtio.load_srt(project / "sample.th.srt")
+    # The english_left flag must not rewrite the kept word.
+    assert out.subtitles[2].content == "<i>ok นะ</i>"
+    assert "ok" in (project / "sample.report.txt").read_text(encoding="utf-8")
+
+
+def test_dry_run_writes_no_report(project, fake):
+    run(project, fake, project / "sample.en.srt", "--dry-run")
+    assert not (project / "sample.report.txt").exists()
+    assert fake.call_count == 0
+
+
+def test_bible_only_writes_no_report(project, fake):
+    fake.queue(BIBLE_REPLY)
+    run(project, fake, project / "sample.en.srt", "--bible-only")
+    assert not (project / "sample.report.txt").exists()
+
+
+def test_the_report_uses_the_glossary(project, fake):
+    write_glossary(project, glossary.Term("Hello", "translate", "สวัสดี"))
+    fake.queue("[1] หวัดดี\n[2] สบายดีไหม\n[3] {0}ok นะ{1}")
+    run(project, fake, project / "sample.en.srt")
+
+    text = (project / "sample.report.txt").read_text(encoding="utf-8")
+    assert "glossary_missing" in text
+    assert "สวัสดี" in text
+
+
+def test_cached_entries_are_still_verified(project, fake, capsys):
+    fake.queue(REPLIES)
+    run(project, fake, project / "sample.en.srt")
+    (project / "sample.report.txt").unlink()
+
+    # Second run: nothing is queued, so every entry comes from the cache.
+    status = run(project, fake, project / "sample.en.srt")
+    assert status == 0
+    assert fake.call_count == 1
+    assert (project / "sample.report.txt").exists()
+    assert CLEAN_REPORT in (project / "sample.report.txt").read_text(encoding="utf-8")
+
+
+def test_an_unwritable_report_only_warns(project, fake, capsys, monkeypatch):
+    fake.queue(REPLIES)
+
+    def boom(path, text):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(verify, "write_report", boom)
+    status = run(project, fake, project / "sample.en.srt")
+    captured = capsys.readouterr()
+
+    assert status == 0
+    assert (project / "sample.th.srt").exists()
+    assert "report:" not in captured.err

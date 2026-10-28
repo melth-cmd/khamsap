@@ -207,3 +207,11 @@ def write_srt(
     _atomic_write(path, data)
     log.info("Wrote %s (%s)", path.name, encoding)
     return path
+
+
+def write_text(path: str | Path, text: str, encoding: str = "utf-8") -> Path:
+    """Write plain text atomically. Used for report.txt, never for subtitles."""
+    path = Path(path)
+    _atomic_write(path, text.encode(encoding))
+    log.info("Wrote %s (%s)", path.name, encoding)
+    return path

@@ -160,6 +160,30 @@ def test_write_srt_leaves_no_temp_files(tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["out.srt"]
 
 
+def test_write_text_writes_utf8(tmp_path):
+    target = srtio.write_text(tmp_path / "report.txt", "สวัสดี\n")
+    assert target == tmp_path / "report.txt"
+    assert target.read_text(encoding="utf-8") == "สวัสดี\n"
+
+
+def test_write_text_creates_parent_directory(tmp_path):
+    target = tmp_path / "nested" / "report.txt"
+    srtio.write_text(target, "hi")
+    assert target.exists()
+
+
+def test_write_text_replaces_an_existing_file(tmp_path):
+    target = tmp_path / "report.txt"
+    srtio.write_text(target, "old")
+    srtio.write_text(target, "new")
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+def test_write_text_leaves_no_temp_files(tmp_path):
+    srtio.write_text(tmp_path / "report.txt", "hi")
+    assert [p.name for p in tmp_path.iterdir()] == ["report.txt"]
+
+
 def test_write_srt_roundtrip(tmp_path):
     original = srtio.load_srt(FIXTURES / "simple.srt")
     target = tmp_path / "out.srt"

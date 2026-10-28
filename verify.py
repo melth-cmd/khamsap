@@ -1,9 +1,8 @@
 """Verification pass: look at a finished translation and flag what looks wrong.
 
 This module never changes the subtitles. It compares each entry with the source
-it was translated from and returns flags; report.txt (the next step) is the only
-place those flags are written. Fixing is a human decision, or an explicit
---fix run later.
+it was translated from, returns flags, and renders them into report.txt beside
+the output. Fixing is a human decision, or an explicit --fix run later.
 
 Only the English source and the finished Thai are compared, so cached and
 freshly translated entries are treated the same.
@@ -25,15 +24,18 @@ empty: they are allowed to come back untranslated.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Mapping, Protocol, Sequence
 
 import glossary
 import layout
 import llm
+import srtio
 import tags
 
 log = logging.getLogger(__name__)
@@ -328,3 +330,159 @@ def verify_file(translated: Verifiable, terms: Sequence[glossary.Term] = ()) -> 
 
     verification.flags.sort(key=lambda flag: (flag.index, KINDS.index(flag.kind)))
     return verification
+
+
+# --- report.txt -------------------------------------------------------------
+#
+# The report is written after every translating run and never changes the
+# subtitles. It says what was checked, what was flagged, what layout had to
+# repair, and how many entries the HI cleanup removed, so a surprisingly short
+# file or a bad line can be understood without re-reading the translation.
+
+REPORT_SUFFIX = ".report.txt"
+
+
+def report_path(source: str | Path) -> Path:
+    """Where the report for `source` goes: Movie.en.srt -> Movie.report.txt.
+
+    Like the other sidecars, the ".en." tag is dropped rather than rewritten.
+    """
+    return srtio.sidecar_path(source, REPORT_SUFFIX)
+
+
+def write_report(path: str | Path, text: str) -> Path:
+    """Write the rendered report atomically as UTF-8."""
+    return srtio.write_text(path, text)
+
+
+def _plural(count: int, word: str, plural: str | None = None) -> str:
+    if count == 1:
+        return f"{count} {word}"
+    return f"{count} {plural or word + 's'}"
+
+
+def layout_summary(translated: Verifiable) -> str:
+    """One line about line-count and dash repairs, with the merge rate.
+
+    The merge rate is the point: it shows whether the prompt rule is working,
+    or whether layout.py is silently fixing every second multi-line entry.
+    """
+    sources = getattr(translated, "sources", {})
+    dash = proportional = extra = dashes = 0
+    multi_line = 0
+    for result in translated.results:
+        source = sources.get(result.index)
+        if source is None:
+            continue
+        if layout.line_count(source) > 1:
+            multi_line += 1
+        if result.rewrapped == "dash":
+            dash += 1
+        elif result.rewrapped == "proportional":
+            proportional += 1
+        elif result.rewrapped == "extra_lines":
+            extra += 1
+        if result.dashes_restored:
+            dashes += 1
+
+    if multi_line == 0 and not extra and not dashes:
+        return "Layout repairs: none (no multi-line entries)"
+
+    split = dash + proportional
+    parts: list[str] = []
+    if multi_line:
+        rate = split / multi_line * 100
+        how = []
+        if dash:
+            how.append(f"{dash} dash")
+        if proportional:
+            how.append(f"{proportional} proportional")
+        detail = f", {', '.join(how)}" if how else ""
+        parts.append(
+            f"{split} of {multi_line} multi-line "
+            f"{'entry' if multi_line == 1 else 'entries'} re-split "
+            f"({rate:.0f}%{detail})"
+        )
+    if extra:
+        parts.append(f"{_plural(extra, 'entry', 'entries')} with extra lines")
+    if dashes:
+        parts.append(f"{_plural(dashes, 'speaker dash', 'speaker dashes')} put back")
+    return "Layout repairs: " + ", ".join(parts)
+
+
+def _flag_block(flag: Flag) -> str:
+    """One flag: its reason, then the source and the translation, line by line."""
+    lines = [f"[{flag.index}] {flag.kind}", f"  reason: {flag.message}"]
+    for label, text in (("original", flag.source), ("translation", flag.translation)):
+        content = text.split("\n") if text else [""]
+        lines.append(f"  {label}:")
+        lines.extend(f"    {line}" for line in content)
+    return "\n".join(lines)
+
+
+def render_report(
+    translated: Verifiable,
+    verification: Verification,
+    source_name: str = "",
+    target_name: str = "",
+    model: str = "",
+    now: dt.datetime | None = None,
+) -> str:
+    """The whole report.txt as text, ready to write.
+
+    Everything comes from the finished run: flags and counts from
+    `verification`, dropped entries and layout repairs from `translated`.
+    `now` is injectable so tests can pin the timestamp.
+    """
+    created = (now or dt.datetime.now()).strftime("%Y-%m-%d %H:%M")
+    flagged = len(verification.entries)
+
+    lines = ["Translation report"]
+    if source_name:
+        lines.append(f"  source:  {source_name}")
+    if target_name:
+        lines.append(f"  output:  {target_name}")
+    if model:
+        lines.append(f"  model:   {model}")
+    lines.append(f"  created: {created}")
+    lines.append("")
+
+    checked = _plural(verification.checked, "entry", "entries")
+    if verification.flags:
+        lines.append(
+            f"Checked {checked}, flagged {_plural(flagged, 'entry', 'entries')}."
+        )
+        counts = ", ".join(
+            f"{kind} {verification.by_kind[kind]}"
+            for kind in KINDS
+            if kind in verification.by_kind
+        )
+        lines.append(f"Flags: {counts}")
+    else:
+        lines.append(f"Checked {checked}; nothing flagged.")
+
+    dropped = getattr(translated, "dropped", [])
+    if dropped:
+        lines.append(
+            f"Dropped before translation: {_plural(len(dropped), 'entry', 'entries')} "
+            "(HI cleanup, or nothing left to translate; not in the output)"
+        )
+    else:
+        lines.append("Dropped before translation: none")
+
+    unverified = len(translated.results) - verification.checked
+    if unverified > 0:
+        lines.append(f"Not verified: {_plural(unverified, 'entry', 'entries')}")
+
+    lines.append(layout_summary(translated))
+
+    if verification.flags:
+        lines.append("")
+        lines.append(
+            "Each flag below is for you to check; this program changes nothing."
+        )
+        for flag in verification.flags:
+            lines.append("")
+            lines.append(_flag_block(flag))
+
+    return "\n".join(lines) + "\n"

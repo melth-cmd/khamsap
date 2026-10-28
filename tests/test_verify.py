@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
 
 import glossary
 import pipeline
@@ -248,12 +252,15 @@ class FakeResult:
     text: str
     ok: bool = True
     reason: str | None = None
+    rewrapped: str | None = None
+    dashes_restored: bool = False
 
 
 @dataclass
 class FakeFile:
     results: list[FakeResult] = field(default_factory=list)
     sources: dict[int, str] = field(default_factory=dict)
+    dropped: list[int] = field(default_factory=list)
 
 
 def test_verify_file_checks_every_entry():
@@ -379,3 +386,181 @@ def test_pipeline_keeps_sources_for_cached_entries(tmp_path):
     second = pipeline.translate_file(FakeClient(), source, sleep=lambda seconds: None)
     assert second[0].sources == {1: "<i>Wait for me.</i>"}
     assert verify.verify_file(second[0]).flags == []
+
+
+# --- report.txt -------------------------------------------------------------
+
+NOW = dt.datetime(2026, 10, 28, 19, 30)
+
+
+def entry(index: int, text: str, **kwargs) -> FakeResult:
+    return FakeResult(index, text, **kwargs)
+
+
+def translated_file(
+    *results: FakeResult,
+    sources: dict[int, str] | None = None,
+    dropped: list[int] | None = None,
+) -> FakeFile:
+    return FakeFile(results=list(results), sources=sources or {}, dropped=dropped or [])
+
+
+def test_report_path_drops_the_en_tag():
+    assert verify.report_path("Movie (2026).en.srt") == Path("Movie (2026).report.txt")
+
+
+def test_report_path_without_a_language_tag():
+    assert verify.report_path("Movie.srt") == Path("Movie.report.txt")
+
+
+def test_write_report_writes_utf8(tmp_path):
+    target = verify.write_report(tmp_path / "report.txt", "สวัสดี\n")
+    assert target.read_text(encoding="utf-8") == "สวัสดี\n"
+
+
+def test_write_report_creates_parent_directory(tmp_path):
+    target = verify.write_report(tmp_path / "a" / "b" / "report.txt", "hi")
+    assert target.exists()
+
+
+def test_a_clean_report_says_nothing_was_flagged():
+    translated = translated_file(entry(1, "สวัสดี"), sources={1: "Hello."})
+    verification = verify.verify_file(translated)
+    text = verify.render_report(translated, verification, now=NOW)
+    assert "Checked 1 entry; nothing flagged." in text
+    assert "Dropped before translation: none" in text
+    assert "Layout repairs: none (no multi-line entries)" in text
+    assert "Each flag" not in text
+
+
+def test_the_report_names_the_file_the_output_and_the_model():
+    translated = translated_file(entry(1, "สวัสดี"), sources={1: "Hello."})
+    text = verify.render_report(
+        translated,
+        verify.verify_file(translated),
+        source_name="Movie.en.srt",
+        target_name="Movie.th.srt",
+        model="test/model",
+        now=NOW,
+    )
+    assert "source:  Movie.en.srt" in text
+    assert "output:  Movie.th.srt" in text
+    assert "model:   test/model" in text
+    assert "created: 2026-10-28 19:30" in text
+
+
+def test_the_report_leaves_out_an_empty_model_line():
+    translated = translated_file(entry(1, "สวัสดี"), sources={1: "Hello."})
+    text = verify.render_report(translated, verify.verify_file(translated), now=NOW)
+    assert "model:" not in text
+
+
+def test_each_flag_gets_a_block_with_reason_original_and_translation():
+    translated = translated_file(
+        entry(1, "สวัสดี world"), sources={1: "Hello world."}
+    )
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "[1] english_left" in text
+    assert "reason: English left in the translation: world" in text
+    assert "original:\n    Hello world." in text
+    assert "translation:\n    สวัสดี world" in text
+
+
+def test_a_multi_line_original_keeps_its_lines_in_the_report():
+    translated = translated_file(entry(1, "หนึ่งสอง"), sources={1: "One.\nTwo."})
+    text = verify.render_report(translated, verify.verify_file(translated), now=NOW)
+    assert "original:\n    One.\n    Two." in text
+
+
+def test_the_report_counts_flags_by_kind_in_a_stable_order():
+    translated = translated_file(
+        entry(1, "หนึ่ง English"),
+        entry(2, "สวัสดี", ok=False, reason="transport"),
+        sources={1: "One.\nTwo.", 2: "Hello."},
+    )
+    text = verify.render_report(translated, verify.verify_file(translated), now=NOW)
+    assert "Checked 2 entries, flagged 2 entries." in text
+    assert "Flags: failed 1, line_count 1, english_left 1" in text
+
+
+def test_the_report_mentions_dropped_entries():
+    translated = translated_file(
+        entry(1, "สวัสดี"), sources={1: "Hello."}, dropped=[2, 3]
+    )
+    text = verify.render_report(translated, verify.verify_file(translated), now=NOW)
+    assert "Dropped before translation: 2 entries" in text
+
+
+def test_one_dropped_entry_is_singular():
+    translated = translated_file(
+        entry(1, "สวัสดี"), sources={1: "Hello."}, dropped=[2]
+    )
+    text = verify.render_report(translated, verify.verify_file(translated), now=NOW)
+    assert "Dropped before translation: 1 entry " in text
+
+
+def test_the_report_mentions_entries_it_could_not_verify():
+    translated = translated_file(entry(1, "สวัสดี"), sources={})
+    text = verify.render_report(translated, verify.verify_file(translated), now=NOW)
+    assert "Not verified: 1 entry" in text
+
+
+def test_the_report_ends_with_a_newline():
+    translated = translated_file(entry(1, "สวัสดี"), sources={1: "Hello."})
+    text = verify.render_report(translated, verify.verify_file(translated), now=NOW)
+    assert text.endswith("\n")
+
+
+# --- layout summary ---------------------------------------------------------
+
+
+def test_layout_summary_reports_the_merge_rate():
+    translated = translated_file(entry(1, "หนึ่ง\nสอง"), sources={1: "One.\nTwo."})
+    summary = verify.layout_summary(translated)
+    assert summary == "Layout repairs: 0 of 1 multi-line entry re-split (0%)"
+
+
+def test_layout_summary_reports_dash_and_proportional_splits():
+    first = entry(1, "- หนึ่ง\n- สอง")
+    first.rewrapped = "dash"
+    first.dashes_restored = True
+    second = entry(2, "หนึ่ง\nสอง")
+    second.rewrapped = "proportional"
+    translated = translated_file(
+        first, second, sources={1: "- One.\n- Two.", 2: "Three.\nFour."}
+    )
+    summary = verify.layout_summary(translated)
+    assert "2 of 2 multi-line entries re-split" in summary
+    assert "(100%, 1 dash, 1 proportional)" in summary
+    assert "1 speaker dash put back" in summary
+
+
+def test_layout_summary_counts_extra_lines():
+    extra = entry(1, "หนึ่ง\nสอง\nสาม")
+    extra.rewrapped = "extra_lines"
+    translated = translated_file(extra, sources={1: "One.\nTwo."})
+    assert "0 of 1 multi-line entry re-split (0%)" in verify.layout_summary(translated)
+    assert "1 entry with extra lines" in verify.layout_summary(translated)
+
+
+def test_layout_summary_handles_a_plain_file():
+    translated = translated_file(entry(1, "สวัสดี"), sources={1: "Hello."})
+    assert verify.layout_summary(translated) == (
+        "Layout repairs: none (no multi-line entries)"
+    )
+
+
+@pytest.mark.parametrize(
+    "count, word, plural, expected",
+    [
+        (0, "entry", "entries", "0 entries"),
+        (1, "entry", "entries", "1 entry"),
+        (2, "entry", "entries", "2 entries"),
+        (1, "speaker dash", "speaker dashes", "1 speaker dash"),
+        (3, "speaker dash", "speaker dashes", "3 speaker dashes"),
+    ],
+)
+def test_plural(count, word, plural, expected):
+    assert verify._plural(count, word, plural) == expected

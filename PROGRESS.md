@@ -324,7 +324,36 @@ Phase 4: Verification
         Known: length ratios are heuristics tuned for subtitles, not measured against a
         corpus; english_left flags Latin text on purpose (a kept on-screen word needs a
         "keep" term to be accepted).
- 19. report.txt only, no auto-fix
+ 19. [x] report.txt only, no auto-fix
+     -> verify.py: report_path() (Movie.en.srt -> Movie.report.txt, ".en." dropped like
+        the other sidecars), render_report() and write_report(); layout_summary() puts the
+        repairs on one line with the merge rate ("2 of 5 multi-line entries re-split
+        (40%, 1 dash, 1 proportional), 1 entry with extra lines, 1 speaker dash put back"),
+        which is what item 13 wanted the report for.
+        Report layout: source/output/model/created, "Checked N entries, flagged M" plus a
+        count per kind in KINDS order (or "nothing flagged"), the dropped count, the layout
+        line, then one block per flag: [index] kind, reason, original and translation with
+        their line breaks kept. Flags are grouped by entry and the report ends with a
+        newline. All text is UTF-8 and written atomically.
+        -> translate.py: translate_one() now returns (result, target, report) and calls
+           write_report_for() (verify_file + render + write). The main loop still prints the
+           summary, says "N entries left in English" when some failed, and always prints
+           "report: PATH" on stderr. A report that cannot be written (read-only folder)
+           logs a warning, returns None and leaves exit status alone: the .srt is the
+           product. --dry-run and --bible-only never write one.
+        -> srtio.py: write_text() (atomic UTF-8, same temp-file path as write_srt).
+        Decisions: the report is written on every translating run, also when nothing is
+        flagged, so the merge rate and dropped count are on record; verification runs on
+        cached entries too (sources come from the cache-aware pipeline); the summary line
+        is unchanged apart from the report path, so the report stays the only new output.
+        tests: 38 new (4 srtio.write_text, 23 report/layout in test_verify, 11 CLI) = 601
+        passing. Live-ish check with the fake client: a clean 4-entry run printed a report
+        with no flag blocks; a failed entry produced "Flags: failed 1" and its block;
+        strip_hi run reported "Dropped before translation: 1 entry".
+        Known: flag counts by kind are totals across entries; the report does not repeat
+        the bible/glossary contents. No --fix/--review yet (items 20-21), so the report is
+        read by a human for now.
+        Phase 4 complete.
 
 Phase 5: Extras
  20. --fix (stricter prompt, flagged lines only)
@@ -376,9 +405,9 @@ Phase 5: Extras
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
 post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is complete
 (item 15 pre-pass, item 16 reload the files each run, item 17 per-batch glossary +
-cache keys). Item 18 is done: verify.py holds the checks and the pipeline exposes the
-source text next to each result. Next is item 19: write report.txt and wire it into the
-CLI (report only, no auto-fix).
+cache keys). Phase 4 is complete: item 18 added the checks (verify.py) and item 19 writes
+report.txt after every translating run. Next is Phase 5, item 20: --fix (a stricter prompt
+for flagged lines only, re-translating just those), then item 21 --review.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -424,14 +453,17 @@ Open threads carried forward
   - layout.py repairs line counts and speaker dashes; verify.py now flags any that
     remain (line_count / dashes_lost), plus tags, glossary, leftover English, length,
     empty and failed entries.
-  - Item 18 done: TranslatedFile.sources maps entry index -> the text it was translated
-    from (HI-stripped, tags intact), cached entries included. verify.verify_file(result,
-    terms) is the one call item 19 needs; Verification.by_kind / .entries are there for
-    the header and summary. Dropped-by-HI entries are not in results, so the report's
-    "dropped" count still has to come from TranslatedFile.dropped.
-  - report.txt is not written yet (item 19): report data (flags) exists, but nothing is
-    written and the CLI still prints "(see report in a later step)".
-  - bible.py and glossary.py are written (items 15-17); verify.py is written (item 18).
+  - Items 18-19 done: TranslatedFile.sources maps entry index -> the text it was translated
+    from (HI-stripped, tags intact), cached entries included; verify.verify_file(result,
+    terms) returns the flags; verify.render_report(...) + write_report() write
+    Movie.report.txt. translate.py does this in write_report_for() after every translated
+    file, so the CLI and the report always see the same data. Nothing reads report.txt
+    back: --fix (item 20) will need the flagged indexes, and can call verify_file() again
+    or remember the Verification for the current run.
+  - The summary line still has no flag count: the report path is printed on stderr instead.
+    Add a count there only if it turns out to be missed.
+  - bible.py and glossary.py are written (items 15-17); verify.py holds checks + report
+    (items 18-19).
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;

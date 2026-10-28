@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import batcher
@@ -22,6 +23,7 @@ import glossary
 import llm
 import pipeline
 import srtio
+import verify
 
 log = logging.getLogger("translate")
 
@@ -203,8 +205,12 @@ def translate_one(
     limit: int | None = None,
     range_: str | None = None,
     notes: bible.Notes | None = None,
-) -> tuple[pipeline.TranslatedFile, Path]:
-    """Translate a single file using the configured settings."""
+) -> tuple[pipeline.TranslatedFile, Path, Path | None]:
+    """Translate a single file and write its report.
+
+    Returns (result, output path, report path); the report path is None when it
+    could not be written, which is a warning, not a failed translation.
+    """
     target = planned_output(source, settings, output)
     if notes is not None:
         log.info(
@@ -218,7 +224,8 @@ def translate_one(
             if notes.has_glossary
             else "none",
         )
-    return pipeline.translate_file(
+    terms = notes.terms if notes is not None else ()
+    result, target = pipeline.translate_file(
         client,
         source,
         target,
@@ -232,8 +239,38 @@ def translate_one(
         limit=limit,
         range_=range_,
         bible=notes.bible if notes is not None else "",
-        terms=notes.terms if notes is not None else (),
+        terms=terms,
     )
+    return result, target, write_report_for(source, target, result, terms, settings)
+
+
+def write_report_for(
+    source: Path,
+    target: Path,
+    result: pipeline.TranslatedFile,
+    terms: Sequence[glossary.Term],
+    settings: config_module.Settings,
+) -> Path | None:
+    """Verify the finished file and write its report beside the source.
+
+    An unwritable report only warns: the subtitles are already written, and a
+    read-only folder must not turn a finished translation into a failed run.
+    """
+    verification = verify.verify_file(result, terms)
+    text = verify.render_report(
+        result,
+        verification,
+        source_name=source.name,
+        target_name=target.name,
+        model=settings.llm.model,
+    )
+    path = verify.report_path(source)
+    try:
+        verify.write_report(path, text)
+    except OSError as exc:
+        log.warning("could not write %s: %s", path, exc)
+        return None
+    return path
 
 
 def _summary(
@@ -437,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(sources) > 1:
             print(f"[{number}/{len(sources)}] {source.name}", file=sys.stderr)
         try:
-            result, target = translate_one(
+            result, target, report = translate_one(
                 client,
                 source,
                 settings,
@@ -460,10 +497,11 @@ def main(argv: list[str] | None = None) -> int:
         if result.failures:
             print(
                 f"  {len(result.failures)} entr"
-                f"{'y' if len(result.failures) == 1 else 'ies'} left in English "
-                "(see report in a later step)",
+                f"{'y' if len(result.failures) == 1 else 'ies'} left in English",
                 file=sys.stderr,
             )
+        if report is not None:
+            print(f"  report: {report}", file=sys.stderr)
 
     if len(sources) > 1:
         print(_total(len(sources), failed_files, entries, leftover, tokens))

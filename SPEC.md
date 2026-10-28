@@ -208,7 +208,12 @@ warning, and wire_format "json" is rejected until it is implemented.
                               a glossary term that appears in it, or by any change to the
                               bible; failed entries are never cached, so a rerun re-requests
                               only them)
-  Movie (2026).report.txt    verification flags (entry number, original, translation, reason)
+  Movie (2026).report.txt    verification flags (entry number, original, translation, reason).
+                             Written after every translating run (reading it is never part
+                             of a run), and also records entries dropped by HI cleanup and
+                             line-count/dash repairs, with a merge rate to judge whether the
+                             prompt's line rule is working. --dry-run and --bible-only write
+                             no report. Report only: the .srt is never changed by checks.
 
 Output naming: the ".en." tag becomes ".th." wherever it stands in the name, and ".th"
 is appended before the extension when there is no such tag:
@@ -340,3 +345,7 @@ proposes corrections (written to the report, applied only with --fix).
   --fix, --review                             see Verification
   --bilingual                                 English above Thai
   --config path.toml
+
+Every translated file also gets a report next to it (Movie.en.srt -> Movie.report.txt);
+each run prints the path on stderr. A report that cannot be written only warns, because
+the subtitles are already saved.
