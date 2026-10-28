@@ -187,8 +187,9 @@ def _dry_run(args, settings: config_module.Settings) -> int:
         )
         dropped = f", {estimate.dropped} dropped" if estimate.dropped else ""
         batches = "batch" if estimate.batches == 1 else "batches"
+        entries = "entry" if estimate.entries == 1 else "entries"
         print(
-            f"{source.name}: {estimate.entries} entries{dropped} in "
+            f"{source.name}: {estimate.entries} {entries}{dropped} in "
             f"{estimate.batches} {batches}, ~{estimate.prompt_tokens:,} + "
             f"{estimate.completion_tokens:,} tokens, ~${estimate.cost_usd:.4f}"
         )

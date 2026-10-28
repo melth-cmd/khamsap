@@ -397,6 +397,17 @@ def test_negative_limit_is_rejected(project, fake, capsys):
     assert "negative" in capsys.readouterr().err
 
 
+def test_dry_run_says_one_entry_for_one_entry(project, fake, capsys):
+    shutil.copy(FIXTURES / "simple.srt", project / "one.en.srt")
+    translate.main(
+        [str(project / "one.en.srt"), "--limit", "1", "--dry-run",
+         "--config", str(project / "config.toml")]
+    )
+    out = capsys.readouterr().out
+    assert "1 entry in 1 batch" in out
+    assert "1 entries" not in out
+
+
 def test_dry_run_needs_no_key_and_builds_no_client(project, monkeypatch, capsys):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 

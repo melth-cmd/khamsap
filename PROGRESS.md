@@ -228,6 +228,27 @@ Phase 5: Extras
   Not implemented on purpose: max chars per line (no convention chosen yet); lines are
   split at the source's break points, not to a width.
 
+### PHASE 2 FINAL VERIFICATION (end of session)
+
+  Automated: 349 unit tests pass (pytest -q, live excluded). All modules compile.
+  Live (real OpenRouter, key from .env, never printed):
+    - pytest -m live: 1 passed (3 entries, all Thai).
+    - PEN15 --range 88-95 (8 entries, 6 of them two-line speaker turns): 0 failures,
+      line counts 8/8 correct, dashes present on every dashed entry, Thai natural.
+      The raw cached replies already had the right line count, so layout had nothing
+      to repair that time; the repair paths are covered by unit tests.
+    - PEN15 --range 12-15: the only three-line entry (with <i> on every line) came
+      back as three lines with tags restored per line.
+    - Rerun of the same slice: 0 tokens, byte-identical output (cache v2 keys work).
+    - Two-file run: progress headers, per-file lines, "total: 2 files 2 translated
+      6 entries 1,161 tokens", exit 0. Cache sidecar written next to the source.
+  CLI hiccups found and fixed: "1 entries" in --dry-run (now singular).
+  Pre-flight confirmed against a real shell: collision + *.th.srt + missing file are all
+  reported together, exit 2, nothing written and no API call. No args: exit 2.
+  Secret check: the only key-shaped string in git history is a 30-char synthetic value in
+  tests/test_llm.py (the "pasted into key_env" test). The real key is 73 chars, lives in
+  .env only, is not in any tracked file, and does not share that prefix. .env is untracked.
+
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
@@ -270,4 +291,9 @@ Open threads carried into Phase 2
     EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
   - verify.py, bible.py and glossary.py are still empty.
   - Test material from this phase lived in /tmp/opencode (PEN15 sample, edge-case files);
-    /tmp may be cleared, so copy anything worth keeping.
+    /tmp may be cleared, so copy anything worth keeping. The repo now has its own
+    tests/fixtures/edge_cases.srt, so no external file is needed for the suite.
+  - Phase 3 (item 15) needs decisions before code: how to chunk a long file for the pre-pass,
+    what the bible must contain, which language it is written in, glossary "action" values,
+    whether --bible-only pauses or just stops, and how bible/glossary changes invalidate
+    the cache (the hook already exists: pass a glossary callable to Cache).
