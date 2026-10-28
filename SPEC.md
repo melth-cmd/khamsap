@@ -165,7 +165,7 @@ Core ideas:
 
   [output]
   encoding = "utf-8"            # or "utf-8-sig" for TVs/old players that garble Thai
-  bilingual = false             # English line above Thai
+  bilingual = false             # English line above Thai (planned, last item; warns for now)
   strip_en_suffix = true        # ".en." becomes ".th." wherever it stands
 
   [cleanup]
@@ -361,7 +361,7 @@ runs first and the review looks at what is still flagged, and both are shown in 
                                               --limit/--range restrict what it reads.
   --strip-hi                                  drop [sound effects]/(descriptions) from output
   --fix, --review                             see Verification
-  --bilingual                                 English above Thai
+  --bilingual                                 English above Thai (planned, not built yet; warns)
   --config path.toml
 
 Every translated file also gets a report next to it (Movie.en.srt -> Movie.report.txt);

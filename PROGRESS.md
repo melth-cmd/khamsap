@@ -415,11 +415,17 @@ Phase 5: Extras
      line.
      Known: review costs one call per batch of flagged lines (same max_retries budget);
      its suggestions are not machine-applied, so applying one is a hand edit for now.
- 22. Bilingual output option
- 23. Other providers (different base URL + key env var)
- 24. Saved settings are already covered by config.toml
- 25. Easy to understand user manual
- 26. Discuss options for GUI
+ 22. Other providers (different base URL + key env var)
+     Open question first: are they needed? base_url and key_env already come from config
+     and the client is the OpenAI SDK, so an OpenAI-compatible endpoint may already work;
+     the real step may be docs + neutral wording, not a feature. Decide before building.
+ 23. Saved settings are already covered by config.toml
+ 24. Easy to understand user manual
+ 25. Discuss options for GUI
+ 26. Bilingual output option (English line above Thai)
+     Moved to the bottom at the user's request: both languages in one subtitle is a
+     viewing preference, not needed yet. config [output] bilingual exists and warns that it
+     is not implemented.
 
 ### POST-PHASE-1: line breaks (A + D), agreed with user
 
@@ -464,8 +470,10 @@ post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is compl
 (item 15 pre-pass, item 16 reload the files each run, item 17 per-batch glossary +
 cache keys). Phase 4 is complete: item 18 added the checks (verify.py) and item 19 writes
 report.txt after every translating run. Phase 5 has started: item 20 (--fix) and item 21
-(--review suggestions in report.txt) are done. Next is item 22: bilingual output (English
-line above Thai), then item 23 (other providers).
+(--review suggestions in report.txt) are done. Bilingual output is deferred to the end of
+Phase 5 (item 26) at the user's request. Next is item 22: decide whether other providers
+are needed at all (base_url + key_env already exist), then 23 (settings), 24 (manual),
+25 (GUI discussion).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -533,9 +541,11 @@ Open threads carried forward
     Advice is never cached and never applied; --fix is still the only thing that edits the
     .srt. review_flagged() runs after the fix pass, so --fix --review fixes first and
     reviews what remains.
-  - Next: item 22 (bilingual: English line above Thai, [output] bilingual already exists in
-    config and currently only warns). Then item 23 (other providers: base URL + key env
-    var), 25 (user manual), 26 (GUI discussion).
+  - Bilingual output (English above Thai) is now the last Phase 5 item (26), by request.
+  - Next: item 22, and it starts with a decision, not code: base_url and key_env are
+    already config, and OpenRouterClient is plain OpenAI SDK, so OpenAI-compatible
+    providers may already work. What is left is neutral wording (errors say "OpenRouter"),
+    docs, and support for non-compatible APIs (Anthropic/Gemini/Azure) only if wanted.
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;
