@@ -31,10 +31,21 @@ Core ideas:
    chosen model supports it.
 
 4. Tags handled by placeholders.
-   Strip <i>, </i>, <b>, {\an8} etc. and music markers before sending, replace with
-   simple placeholders, restore in code afterward, and validate that the tag counts
-   match. Also define handling for sound-effect brackets ([door slams]) and speaker
-   dashes ("- Hello.") since both are very common.
+   Strip <i>, </i>, <b>, {\an8} etc. and music markers before sending, replace them with
+   numbered placeholders ({0}, {1}, ...; chosen over symbolic ones for token cost),
+   restore in code afterward, and validate that the placeholder counts match (missing,
+   duplicate or invented placeholders are re-requested, never silently shipped).
+
+   Sound-effect brackets ([door slams]) and speaker dashes ("- Hello.") are content,
+   not tags, and are left intact for the model.
+
+   Optional HI (hearing-impaired) stripping: with [cleanup] strip_hi enabled, bracketed
+   and parenthesized descriptions ([door slams], (laughs), [MUSIC PLAYING]) are removed
+   from the SOURCE before batching, so they are never sent or paid for. Music markers
+   and speaker labels are kept. An entry left with no words is dropped from the output
+   entirely, so the translated file may legitimately contain fewer entries than the
+   source; verification is told to expect that. Default off, since removing sound cues
+   is a viewing preference, not a translation one.
 
 5. Validate by ID, not just count.
    All IDs present, no extras, none empty, Thai characters present (unless the source
@@ -108,6 +119,9 @@ Core ideas:
   bilingual = false             # English line above Thai
   strip_en_suffix = true        # Movie.en.srt -> Movie.th.srt
 
+  [cleanup]
+  strip_hi = false              # drop [sound effects] and (descriptions) from the source
+
   [verify]
   max_cps = 17                  # Thai chars per second, tune by feel
 
@@ -148,7 +162,8 @@ The system prompt must say:
 - Translate song lyrics for meaning; keep music markers.
 - Profanity: translate at equivalent strength, do not soften.
 - Idioms: translate meaning, not words.
-- On-screen text and sound-effect brackets: translate, keep the brackets.
+- On-screen text: translate, keep the brackets. (Sound-effect brackets only reach the
+  model when strip_hi is off; with it on they were already removed from the source.)
 - Never merge or split entries. One input ID = one output ID.
 - Context lines are for understanding only and must not appear in the output.
 
@@ -178,6 +193,9 @@ Flags written to report.txt, never auto-fixed:
 - Tag count mismatch with source
 - Empty or suspiciously short/long output
 
+Entries dropped by HI stripping are not flagged; the report notes how many were removed
+so a surprisingly low entry count is explainable.
+
 Optional --fix: re-translate flagged lines only, with a stricter prompt.
 Optional --review: a second LLM pass that sees only flagged lines plus context and
 proposes corrections (written to the report, applied only with --fix).
@@ -190,6 +208,7 @@ proposes corrections (written to the report, applied only with --fix).
   --limit N / --range A-B                     translate only part of the file (dev/testing)
   --dry-run                                   show batch count and estimated tokens/cost, no API calls
   --bible-only                                build bible + glossary, then stop
+  --strip-hi                                  drop [sound effects]/(descriptions) from output
   --fix, --review                             see Verification
   --bilingual                                 English above Thai
   --config path.toml

@@ -18,10 +18,14 @@ Phase 1: Core translator, command line
       Mismatches raise TagMismatch (missing / duplicate / unknown) for the retry layer to use.
       Bracket effects and speaker dashes are content, not tags: they pass through untouched.
       tests/test_tags.py: 23 passing.
- 2b. HI stripping (hi.py) - NOT DONE, decided with user:
-      remove bracketed sound descriptions only ([door slams], (laughs), [MUSIC PLAYING]);
-      music markers and speaker labels stay. Entries left empty are dropped from the output.
-      Config [cleanup] strip_hi, default off. SPEC.md line 152 still needs updating to match.
+ 2b. [x] HI stripping (hi.py)
+      -> hi.py: strip_hi(text) -> HiResult(text, removed) with .changed and .dropped
+      Removes [] and () descriptions only; music markers, speaker labels and dashes stay.
+      Lines left holding just a dash are removed; nothing spanning a line break is eaten,
+      and text with no descriptions is returned unchanged (whitespace included).
+      .dropped means no letters/digits remain, i.e. the entry must be omitted from output.
+      tests/test_hi.py: 17 passing. SPEC.md updated: design item 4, config [cleanup],
+      prompt rules, --strip-hi flag and verification note.
  3. Split into ~60-entry batches, never mid-entry
  4. Tagged-line wire format; send to OpenRouter; decode
  5. Validate by ID; retry only failed entries with backoff and Retry-After
