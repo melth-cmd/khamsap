@@ -436,13 +436,14 @@ Phase 5: Extras
      Gemini native, Azure with api-key + api-version) still needs real work.
      Tests: 13 new (7 config: default/table/type/authorization/key-shaped/plumbing;
      6 llm: default_headers, none, looks_like_key cases) = 657 passing.
- 23. Saved settings are already covered by config.toml
- 24. Easy to understand user manual
- 25. Discuss options for GUI
- 26. Bilingual output option (English line above Thai)
+ 23. Easy to understand user manual
+ 24. Discuss options for GUI
+ 25. Bilingual output option (English line above Thai)
      Moved to the bottom at the user's request: both languages in one subtitle is a
      viewing preference, not needed yet. config [output] bilingual exists and warns that it
      is not implemented.
+     Revisit later, not now: this item is parked and will be taken up again after the
+     manual and the GUI discussion.
 
 ### POST-PHASE-1: line breaks (A + D), agreed with user
 
@@ -488,9 +489,11 @@ post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is compl
 cache keys). Phase 4 is complete: item 18 added the checks (verify.py) and item 19 writes
 report.txt after every translating run. Phase 5 has started: item 20 (--fix) and item 21
 (--review suggestions in report.txt) are done. Bilingual output is deferred to the end of
-Phase 5 (item 26) at the user's request. Item 22 (other providers) is done for
-OpenAI-compatible APIs, with a note to revisit adapters later. Item 23 needs no work
-(settings are config.toml). Next actionable: item 24, the user manual.
+Phase 5 (now item 25) at the user's request and is parked for later. Item 22 (other
+providers) is done for OpenAI-compatible APIs, with a note to revisit adapters later. The
+old "saved settings" item was removed: config.toml already holds every setting worth
+saving, and the few constants left (retry backoff, bible chunking, advisory length limits)
+are deliberately not user settings. Next actionable: item 23, the user manual.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -558,13 +561,20 @@ Open threads carried forward
     Advice is never cached and never applied; --fix is still the only thing that edits the
     .srt. review_flagged() runs after the fix pass, so --fix --review fixes first and
     reviews what remains.
-  - Bilingual output (English above Thai) is now the last Phase 5 item (26), by request.
+  - Bilingual output (English above Thai) is now the last Phase 5 item (25) and is parked
+    for later, by request.
   - Item 22 done for OpenAI-compatible providers: base_url + key_env + model switch the
     endpoint, extra_headers covers providers that ask for headers, errors are neutral.
     Open thread: revisit item 22 to add adapters only if an Anthropic/Gemini/Azure key
     becomes necessary (different body/headers; not worth building speculatively).
-  - Next actionable: item 24, the user manual (23 is already covered by config.toml).
-    Then 25 (GUI discussion) and 26 (bilingual output).
+  - Next actionable: item 23, the user manual. Then 24 (GUI discussion) and 25 (bilingual
+    output, parked for later).
+  - Settings audit (old item 23, removed): everything worth saving is already in
+    config.toml ([llm], [batch], [output], [cleanup]). Left as code constants on purpose:
+    retry backoff/jitter/temperature and the Retry-After cap (runner.py), bible chunk
+    size/temperatures (bible.py), dry-run token ratios (pipeline.py), and the advisory
+    length ratios (verify.py). None is a user preference; promote one only if a real run
+    shows it needs tuning.
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;
