@@ -170,7 +170,7 @@ def load(path: str | Path) -> list[Term]:
     if not path.exists():
         return []
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise GlossaryError(f"could not read {path}: {exc}") from exc
     try:

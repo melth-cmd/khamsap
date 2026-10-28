@@ -420,3 +420,82 @@ def test_build_adds_up_tokens_from_every_call():
     assert result.usage.prompt_tokens == 300
     assert result.usage.completion_tokens == 30
     assert result.total_tokens == 330
+
+
+# --- reading the files back (step 16) ---------------------------------------
+
+
+def test_load_missing_bible_is_empty(tmp_path):
+    assert bible.load(tmp_path / "nope.bible.md") == ""
+
+
+def test_load_strips_the_reader_comment(tmp_path):
+    path = tmp_path / "Movie.bible.md"
+    path.write_text(
+        "# Story bible\n\n<!-- built by translate.py; edit by hand -->\nSomsak uses ผม.\n",
+        encoding="utf-8",
+    )
+    text = bible.load(path)
+    assert "built by translate.py" not in text
+    assert text.startswith("# Story bible")
+    assert "Somsak uses ผม." in text
+
+
+def test_load_accepts_a_byte_order_mark(tmp_path):
+    path = tmp_path / "Movie.bible.md"
+    path.write_text("# Story bible\nMai.\n", encoding="utf-8-sig")
+    assert bible.load(path).startswith("# Story bible")
+
+
+def test_load_reports_an_unreadable_bible(tmp_path):
+    folder = tmp_path / "Movie.bible.md"
+    folder.mkdir()
+    with pytest.raises(bible.BibleError, match="could not read"):
+        bible.load(folder)
+
+
+def test_notes_know_what_they_hold():
+    assert not bible.Notes().has_bible
+    assert not bible.Notes().has_glossary
+    assert bible.Notes(bible="Somsak").has_bible
+    assert bible.Notes(glossary_path=Path("Movie.glossary.toml")).has_glossary
+    assert not bible.Notes(bible="   ").has_bible
+
+
+def test_load_notes_with_no_sidecars(tmp_path):
+    notes = bible.load_notes(tmp_path / "Movie.en.srt")
+    assert notes.bible == ""
+    assert notes.terms == []
+    assert notes.bible_path is None
+    assert notes.glossary_path is None
+
+
+def test_load_notes_reads_both_files(tmp_path):
+    (tmp_path / "Movie.bible.md").write_text("# Story bible\nMai.\n", encoding="utf-8")
+    (tmp_path / "Movie.glossary.toml").write_text(
+        glossary.render([glossary.Term("NASA", "keep")]), encoding="utf-8"
+    )
+
+    notes = bible.load_notes(tmp_path / "Movie.en.srt")
+    assert notes.has_bible and notes.has_glossary
+    assert notes.bible_path == tmp_path / "Movie.bible.md"
+    assert notes.glossary_path == tmp_path / "Movie.glossary.toml"
+    assert notes.terms == [glossary.Term("NASA", "keep")]
+
+
+def test_load_notes_returns_the_edited_file_next_time(tmp_path):
+    path = tmp_path / "Movie.bible.md"
+    source = tmp_path / "Movie.en.srt"
+    path.write_text("Somsak\n", encoding="utf-8")
+    assert bible.load_notes(source).bible == "Somsak"
+
+    path.write_text("Mai\n", encoding="utf-8")  # no rebuild step, no caching
+    assert bible.load_notes(source).bible == "Mai"
+
+
+def test_load_notes_raises_for_a_broken_glossary(tmp_path):
+    (tmp_path / "Movie.glossary.toml").write_text(
+        '[[term]]\nen = "NASA"\naction = "shout"\nth = "นาซา"\n', encoding="utf-8"
+    )
+    with pytest.raises(glossary.GlossaryError, match="Movie.glossary.toml"):
+        bible.load_notes(tmp_path / "Movie.en.srt")

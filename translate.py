@@ -18,6 +18,7 @@ from pathlib import Path
 import batcher
 import bible
 import config as config_module
+import glossary
 import llm
 import pipeline
 import srtio
@@ -161,6 +162,39 @@ def check_inputs(
     return problems
 
 
+def load_notes_for(files: list[str]) -> tuple[dict[Path, bible.Notes], list[str]]:
+    """Read every file's bible and glossary before any work starts.
+
+    One call per run, so an edit always applies to the next run. Problems are
+    collected rather than raised: a typo in a hand-edited glossary should stop
+    the run once, with every bad file named, not three files in.
+    """
+    notes: dict[Path, bible.Notes] = {}
+    problems: list[str] = []
+    for name in files:
+        source = Path(name)
+        if not source.is_file():
+            continue  # check_inputs already reported it
+        try:
+            notes[source] = bible.load_notes(source)
+        except (bible.BibleError, glossary.GlossaryError) as exc:
+            problems.append(str(exc))
+    return notes, problems
+
+
+def missing_notes_hint(notes: dict[Path, bible.Notes]) -> str | None:
+    """One line pointing at --bible-only, or None when every file has a bible."""
+    missing = [source.name for source, entry in notes.items() if not entry.has_bible]
+    if not missing:
+        return None
+    if len(missing) == 1:
+        return f"hint: no story bible for {missing[0]} (optional; --bible-only builds one)"
+    return (
+        f"hint: no story bible for {len(missing)} of {len(notes)} files "
+        "(optional; --bible-only builds one)"
+    )
+
+
 def translate_one(
     client: llm.ChatClient,
     source: Path,
@@ -168,9 +202,22 @@ def translate_one(
     output: Path | None = None,
     limit: int | None = None,
     range_: str | None = None,
+    notes: bible.Notes | None = None,
 ) -> tuple[pipeline.TranslatedFile, Path]:
     """Translate a single file using the configured settings."""
     target = planned_output(source, settings, output)
+    if notes is not None:
+        log.info(
+            "%s: bible %s, glossary %s",
+            source.name,
+            f"{notes.bible_path.name} ({len(notes.bible):,} chars)"
+            if notes.has_bible
+            else "none",
+            f"{notes.glossary_path.name} ({len(notes.terms)} "
+            f"term{'' if len(notes.terms) == 1 else 's'})"
+            if notes.has_glossary
+            else "none",
+        )
     return pipeline.translate_file(
         client,
         source,
@@ -184,10 +231,16 @@ def translate_one(
         max_retries=settings.llm.max_retries,
         limit=limit,
         range_=range_,
+        bible=notes.bible if notes is not None else "",
     )
 
 
-def _summary(source: Path, target: Path, result: pipeline.TranslatedFile) -> str:
+def _summary(
+    source: Path,
+    target: Path,
+    result: pipeline.TranslatedFile,
+    notes: bible.Notes | None = None,
+) -> str:
     tokens = result.usage.prompt_tokens + result.usage.completion_tokens
     count = len(result.subtitles)
     parts = [
@@ -199,11 +252,18 @@ def _summary(source: Path, target: Path, result: pipeline.TranslatedFile) -> str
     if result.failures:
         parts.append(f"{len(result.failures)} FAILED")
     parts.append(f"{tokens} tokens")
+    if notes is not None and notes.has_bible:
+        parts.append(f"bible {len(notes.bible):,} chars")
     return "  ".join(parts)
 
 
-def _dry_run(args, settings: config_module.Settings) -> int:
+def _dry_run(
+    args,
+    settings: config_module.Settings,
+    notes: dict[Path, bible.Notes] | None = None,
+) -> int:
     """Report what the run would do. Needs no API key and makes no calls."""
+    notes = notes or {}
     status = 0
     for name in args.files:
         source = Path(name)
@@ -221,6 +281,7 @@ def _dry_run(args, settings: config_module.Settings) -> int:
             context_after=settings.batch.context_after,
             limit=args.limit,
             range_=args.range_,
+            bible=notes[source].bible if source in notes else "",
             input_usd_per_mtok=settings.llm.input_usd_per_mtok,
             output_usd_per_mtok=settings.llm.output_usd_per_mtok,
         )
@@ -331,8 +392,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {problem}", file=sys.stderr)
         return 2
 
+    # The bible and glossary are read here, once, so a hand edit applies to this
+    # run, and a broken glossary stops the run before a single paid call.
+    notes: dict[Path, bible.Notes] = {}
+    if not args.bible_only:
+        notes, note_problems = load_notes_for(args.files)
+        if note_problems:
+            for problem in note_problems:
+                print(f"error: {problem}", file=sys.stderr)
+            return 2
+        hint = missing_notes_hint(notes)
+        if hint:
+            print(hint, file=sys.stderr)
+
     if args.dry_run:
-        return _dry_run(args, settings)
+        return _dry_run(args, settings, notes)
 
     if settings.output.bilingual:
         print("warning: bilingual output is not implemented yet; writing Thai only",
@@ -368,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
                 output,
                 limit=args.limit,
                 range_=args.range_,
+                notes=notes.get(source),
             )
         except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
             print(f"error: {source.name}: {exc}", file=sys.stderr)
@@ -379,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         tokens += result.usage.prompt_tokens + result.usage.completion_tokens
         leftover += len(result.failures)
 
-        print(_summary(source, target, result))
+        print(_summary(source, target, result, notes.get(source)))
         if result.failures:
             print(
                 f"  {len(result.failures)} entr"

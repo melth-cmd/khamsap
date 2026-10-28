@@ -183,8 +183,12 @@ warning, and wire_format "json" is rejected until it is implemented.
 
   Movie (2026).th.srt        final translation
   Movie (2026).bible.md      story summary, characters (gender/age/relationships),
-                             default register per relationship. Editable.
-  Movie (2026).glossary.toml terms table. Editable. action is one of keep,
+                             default register per relationship. Editable: read again at
+                             the start of every run, and the whole file goes with every
+                             request (it is short by design).
+  Movie (2026).glossary.toml terms table. Editable and read again on every run;
+                             a broken term stops the run (exit 2) before any API
+                             call, naming the term. action is one of keep,
                              transliterate or translate; th holds the Thai
                              spelling for the last two. Example:
                                [[term]]
@@ -267,6 +271,13 @@ Ask the LLM to produce:
 Write to bible.md and glossary.toml, refusing to overwrite existing files without
 --force, so hand edits survive. Then translate: every request carries the whole bible
 (it is short by design) and only the glossary entries relevant to that batch.
+
+Reading them back: both files are read again at the start of every run, so a hand edit
+applies to the very next run with no rebuild step. A missing file is a normal state (a
+one-line hint suggests --bible-only); an unreadable bible or a broken glossary stops the
+run before any API call, naming the file and term, rather than translating with notes the
+translator cannot trust. --bible-only does not read the files it is about to replace, so
+--force can repair a broken one. The --dry-run estimate counts the bible once per batch.
 
 
 ### VERIFICATION PASS (after translation, report only)

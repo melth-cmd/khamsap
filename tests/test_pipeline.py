@@ -387,6 +387,26 @@ def test_estimate_counts_entries_and_batches():
     assert estimate.total_tokens > 0
 
 
+def test_estimate_counts_the_bible_once_per_batch():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    text = "Somsak uses ผม + ครับ with strangers."
+    without = pipeline.estimate(loaded.subtitles, size=1, bible="")
+    with_bible = pipeline.estimate(loaded.subtitles, size=1, bible=text)
+
+    assert with_bible.batches == 3
+    per_batch = len(text) + pipeline.BIBLE_OVERHEAD_CHARS
+    expected = 3 * per_batch / pipeline.CHARS_PER_PROMPT_TOKEN
+    assert with_bible.prompt_tokens - without.prompt_tokens == pytest.approx(expected, abs=1)
+
+
+def test_an_empty_bible_changes_the_estimate_not_at_all():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    assert (
+        pipeline.estimate(loaded.subtitles, bible="  \n").prompt_tokens
+        == pipeline.estimate(loaded.subtitles).prompt_tokens
+    )
+
+
 def test_estimate_honours_a_range():
     loaded = srtio.load_srt(FIXTURES / "simple.srt")
     estimate = pipeline.estimate(loaded.subtitles, range_="2-3")

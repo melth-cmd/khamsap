@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 import pytest
 
+import bible
 import config
 import glossary
 import srtio
@@ -569,3 +571,182 @@ def test_bible_paths_sit_beside_the_source(project):
     bible_path, glossary_path = translate.bible_paths(project / "Show.en.hi_partial.srt")
     assert bible_path.name == "Show.hi_partial.bible.md"
     assert glossary_path.name == "Show.hi_partial.glossary.toml"
+
+
+# --- hand-editable files, reloaded each run (step 16) -----------------------
+
+BIBLE_TEXT = "# Story bible: Sample\n\nSomsak uses ผม + ครับ with strangers.\n"
+
+
+def write_bible(project: Path, text: str = BIBLE_TEXT, name: str = "sample.bible.md") -> Path:
+    path = project / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_the_bible_is_sent_with_the_request(project, fake, capsys):
+    write_bible(project)
+    fake.queue(REPLIES)
+    status = run(project, fake, copy(project, "sample.en.srt"))
+
+    assert status == 0
+    prompt = fake.calls[0][1]["content"]
+    assert "[STORY BIBLE]" in prompt
+    assert "Somsak uses ผม + ครับ with strangers." in prompt
+    assert f"bible {len(BIBLE_TEXT.strip()):,} chars" in capsys.readouterr().out
+
+
+def test_a_hand_edit_applies_to_the_next_run(project, fake):
+    write_bible(project, "Somsak is the father.\n")
+    source = copy(project, "sample.en.srt")
+    fake.queue(REPLIES)
+    run(project, fake, source)
+    assert "Somsak is the father." in fake.calls[0][1]["content"]
+
+    (project / "sample.cache.json").unlink()  # until item 17, the bible is not in the key
+    write_bible(project, "Mai is the daughter.\n")
+    fake.queue(REPLIES)
+    run(project, fake, source)
+
+    assert "Mai is the daughter." in fake.calls[1][1]["content"]
+    assert "Somsak is the father." not in fake.calls[1][1]["content"]
+
+
+def test_a_missing_bible_gets_one_hint(project, fake, capsys):
+    fake.queue(REPLIES)
+    run(project, fake, copy(project, "sample.en.srt"))
+    err = capsys.readouterr().err
+
+    assert "hint: no story bible for sample.en.srt" in err
+    assert "--bible-only" in err
+
+
+def test_no_hint_when_every_file_has_a_bible(project, fake, capsys):
+    write_bible(project)
+    fake.queue(REPLIES)
+    run(project, fake, copy(project, "sample.en.srt"))
+    assert "hint:" not in capsys.readouterr().err
+
+
+def test_the_hint_counts_missing_files(project, fake, capsys):
+    fake.queue(REPLIES).queue(REPLIES)
+    run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"))
+    assert "no story bible for 2 of 2 files" in capsys.readouterr().err
+
+
+def test_the_glossary_is_loaded_but_not_sent_yet(project, fake):
+    write_bible(project)
+    (project / "sample.glossary.toml").write_text(
+        glossary.render([glossary.Term("NASA", "keep")]), encoding="utf-8"
+    )
+    notes, problems = translate.load_notes_for([str(copy(project, "sample.en.srt"))])
+
+    assert problems == []
+    assert [term.en for term in notes[next(iter(notes))].terms] == ["NASA"]
+
+
+def test_a_broken_glossary_stops_the_run_before_any_call(project, fake, capsys):
+    (project / "sample.glossary.toml").write_text(
+        '[[term]]\nen = "NASA"\naction = "shout"\nth = "นาซา"\n', encoding="utf-8"
+    )
+    status = run(project, fake, copy(project, "sample.en.srt"))
+    err = capsys.readouterr().err
+
+    assert status == 2
+    assert "sample.glossary.toml" in err
+    assert "unknown action" in err
+    assert fake.call_count == 0
+    assert not (project / "sample.th.srt").exists()
+
+
+def test_every_broken_glossary_is_reported_at_once(project, fake, capsys):
+    broken = '[[term]]\nen = "NASA"\naction = "shout"\nth = "นาซา"\n'
+    (project / "a.glossary.toml").write_text(broken, encoding="utf-8")
+    (project / "b.glossary.toml").write_text(broken, encoding="utf-8")
+    status = run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"))
+    err = capsys.readouterr().err
+
+    assert status == 2
+    assert "a.glossary.toml" in err and "b.glossary.toml" in err
+    assert fake.call_count == 0
+
+
+def test_a_broken_glossary_fails_a_dry_run_too(project, fake, capsys):
+    (project / "sample.glossary.toml").write_text(
+        '[[term]]\nen = "NASA"\naction = "shout"\nth = "นาซา"\n', encoding="utf-8"
+    )
+    status = run(project, fake, copy(project, "sample.en.srt"), "--dry-run")
+
+    assert status == 2
+    assert "unknown action" in capsys.readouterr().err
+    assert fake.call_count == 0
+
+
+def test_bible_only_force_replaces_a_broken_glossary(project, fake):
+    (project / "sample.glossary.toml").write_text(
+        '[[term]]\nen = "NASA"\naction = "shout"\nth = "นาซา"\n', encoding="utf-8"
+    )
+    fake.queue(BIBLE_REPLY)
+    status = run(project, fake, copy(project, "sample.en.srt"), "--bible-only", "--force")
+
+    assert status == 0  # the pre-pass does not read what it is about to replace
+    assert glossary.load(project / "sample.glossary.toml")
+
+
+def test_verbose_says_which_files_were_read(project, fake, caplog):
+    write_bible(project)
+    (project / "sample.glossary.toml").write_text(
+        glossary.render([glossary.Term("NASA", "keep")]), encoding="utf-8"
+    )
+    fake.queue(REPLIES)
+    with caplog.at_level("INFO"):
+        run(project, fake, copy(project, "sample.en.srt"), "-v")
+
+    assert "bible sample.bible.md" in caplog.text
+    assert "sample.glossary.toml (1 term)" in caplog.text
+
+
+def test_load_notes_for_skips_missing_inputs(project):
+    notes, problems = translate.load_notes_for([str(project / "ghost.srt")])
+    assert notes == {}
+    assert problems == []
+
+
+def test_load_notes_for_keys_notes_by_source(project):
+    source = copy(project, "a.en.srt")
+    write_bible(project, name="a.bible.md")
+    notes, problems = translate.load_notes_for([str(source)])
+
+    assert problems == []
+    assert notes[source].has_bible
+
+
+def test_missing_notes_hint():
+    notes = {Path("a.en.srt"): bible.Notes(bible="Mai.")}
+    assert translate.missing_notes_hint(notes) is None
+
+    notes[Path("b.en.srt")] = bible.Notes()
+    hint = translate.missing_notes_hint(notes)
+    assert "b.en.srt" in hint and "--bible-only" in hint
+
+    notes[Path("c.en.srt")] = bible.Notes()
+    assert "2 of 3 files" in translate.missing_notes_hint(notes)
+
+
+def _prompt_tokens(out: str) -> int:
+    """The ~input-token number from a --dry-run line."""
+    match = re.search(r"~([\d,]+) \+", out)
+    return int(match.group(1).replace(",", ""))
+
+
+def test_dry_run_counts_the_bible(project, fake, capsys):
+    source = copy(project, "sample.en.srt")
+    run(project, fake, source, "--dry-run")
+    without = _prompt_tokens(capsys.readouterr().out)
+
+    write_bible(project, "Somsak is the father and Mai is his daughter. " * 40)
+    run(project, fake, source, "--dry-run")
+    with_bible = _prompt_tokens(capsys.readouterr().out)
+
+    assert with_bible > without
+    assert fake.call_count == 0

@@ -290,6 +290,7 @@ def _rebuild(
 CHARS_PER_PROMPT_TOKEN = 3.2
 CHARS_PER_COMPLETION_TOKEN = 2.2
 PROMPT_OVERHEAD_CHARS = 40  # section labels and [ID] prefixes
+BIBLE_OVERHEAD_CHARS = len("[STORY BIBLE]\n\n")
 
 
 @dataclass
@@ -316,10 +317,15 @@ def estimate(
     context_after: int = 2,
     limit: int | None = None,
     range_: str | tuple[int, int] | None = None,
+    bible: str = "",
     input_usd_per_mtok: float = 0.0,
     output_usd_per_mtok: float = 0.0,
 ) -> Estimate:
-    """Predict batch count, tokens and cost for a run, with no API calls."""
+    """Predict batch count, tokens and cost for a run, with no API calls.
+
+    A story bible goes with every request, so its length is counted once per
+    batch. The glossary follows the same rule once item 17 sends it.
+    """
     prepared = prepare(subtitles, strip_hi=strip_hi)
     selected = batcher.select_range(prepared.entries, limit=limit, range_=range_)
     batches = batcher.make_batches(
@@ -333,6 +339,8 @@ def estimate(
     prompt_chars = completion_chars = 0
     for batch in batches:
         prompt_chars += len(llm.SYSTEM_PROMPT) + PROMPT_OVERHEAD_CHARS
+        if bible.strip():
+            prompt_chars += len(bible) + BIBLE_OVERHEAD_CHARS
         prompt_chars += sum(len(item.text) for item in batch.items)
         prompt_chars += sum(len(line.text) + len(line.thai or "") for line in batch.before)
         prompt_chars += sum(len(line.text) for line in batch.after)

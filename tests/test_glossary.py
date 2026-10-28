@@ -155,6 +155,12 @@ def test_load_reads_the_file(tmp_path):
     assert glossary.load(path) == [glossary.Term("NASA", "keep")]
 
 
+def test_load_accepts_a_byte_order_mark(tmp_path):
+    path = tmp_path / "Movie.glossary.toml"
+    path.write_text(glossary.render([glossary.Term("NASA", "keep")]), encoding="utf-8-sig")
+    assert glossary.load(path) == [glossary.Term("NASA", "keep")]
+
+
 def test_load_names_the_file_when_a_term_is_bad(tmp_path):
     path = tmp_path / "Movie.glossary.toml"
     path.write_text('[[term]]\nen = "NASA"\naction = "shout"\nth = "x"\n', encoding="utf-8")

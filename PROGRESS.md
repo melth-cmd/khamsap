@@ -229,7 +229,31 @@ Phase 3: Story bible and glossary
       Known: a single-part glossary is not filtered for rare words (the merge call does
       that for multi-part files); a transport error loses the parts already read.
       A rerun without --force refuses and makes no call.
- 16. Hand-editable files; reload on each run
+ 16. [x] Hand-editable files; reload on each run
+      Decisions agreed: this step makes only the bible live; the glossary is loaded and
+      validated now and sent from item 17 (so no run pays for the whole glossary first).
+      A broken glossary stops the run like config.toml does, before any API call.
+      -> bible.py: load() (missing -> "", HTML comments stripped, utf-8-sig tolerated,
+         unreadable -> BibleError), Notes (bible text, terms, paths, has_bible /
+         has_glossary), load_notes(source) reads both sidecars fresh; nothing is kept
+         between calls or runs.
+      -> translate.py: load_notes_for() reads every input after check_inputs and before
+         the dry run or the client, and reports ALL broken glossaries at once (exit 2,
+         zero calls, no key needed). The bible is handed to the pipeline through the
+         parameter that already existed, so every request carries it. The per-file summary
+         gains "bible N chars"; one stderr hint per run when files have no bible
+         ("no story bible for a.en.srt (optional; --bible-only builds one)"), and -v
+         logs the file names, sizes and term count. --bible-only does not read the files
+         it replaces, so --force repairs a broken glossary.
+      -> pipeline.estimate(bible=...) counts the bible once per batch; _dry_run uses it.
+      tests: 27 new (9 bible loader/Notes, 1 glossary BOM, 2 estimate, 15 CLI) = 472.
+      Live: demo scene with bible + glossary -> -v reported "bible ... (1,788 chars),
+      glossary ... (9 terms)", the request carried the bible, summary "bible 1,788 chars",
+      and the Thai followed it (Mai calls him พ่อ). A broken glossary exited 2 naming the
+      term, with no key set and no file written. Dry-run: appending 61 chars to the bible
+      moved the estimate by 19 prompt tokens on the next run, so it is re-read every time.
+      Known: until item 17 the bible is not in the cache key, so a bible edit does not
+      re-translate cached lines (the CLI reload test deletes the cache for that reason).
  17. Inject bible (short form) and per-batch glossary entries into every request
 
 Phase 4: Verification
@@ -288,8 +312,9 @@ Phase 5: Extras
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
 post-phase line-break work). Phase 2 is complete (items 11-14). Item 15 (story bible +
-glossary pre-pass) is complete. Next is item 16: load the hand-editable files and reload
-them on every run, then item 17: inject the bible and the per-batch glossary.
+glossary pre-pass) and item 16 (load both hand-editable files, reload them every run,
+bible already sent) are complete. Next is item 17: inject the per-batch glossary entries
+and put the glossary + bible digest into the cache key.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -321,12 +346,14 @@ Open threads carried forward
     "digest(applicable glossary terms) + digest(bible)" from that callable wherever
     Cache(...) is built (pipeline.translate_file builds it today; translate_file has no
     pass-through parameter yet). Decision: a bible edit re-translates the file.
-  - Item 16 needs: load bible.md/glossary.toml beside each source, reload on every run,
-    warn (never crash) on a bad glossary, and say whether a bible was used. A normal run
-    must NOT call the pre-pass (agreed): a hint when the files are missing is enough.
-  - Item 17 needs: bible in llm.build_messages (the parameter exists), per-batch glossary
-    selection by term occurrence, and the cache callable above. The --dry-run estimate
-    does not include bible/glossary overhead yet.
+  - Item 16 done: both files are read once per run by bible.load_notes(); the bible is
+    already in every request; a broken glossary exits 2 before any call; missing files
+    get one hint per run. A normal run still never calls the pre-pass (agreed).
+  - Item 17 needs: per-batch glossary selection (terms whose English appears in the batch
+    items; context lines are for understanding, so they probably should not pull terms in),
+    injection via the glossary= parameter that already exists,
+    the cache callable (digest of those terms + digest of the bible), and the glossary
+    share of the --dry-run estimate (the bible share is already counted).
   - PROMPT_VERSION is still 1 and was deliberately NOT bumped for the line-break prompt rule:
     old entries are repaired on read by layout.py, so bumping would have thrown away every
     cache for a layout fix.

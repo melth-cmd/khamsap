@@ -555,3 +555,62 @@ def write(
     srtio._atomic_write(bible_path, bible.to_markdown().encode("utf-8"))
     log.info("Wrote %s and %s", bible_path.name, glossary_path.name)
     return bible_path, glossary_path
+
+
+# --- reading them back ------------------------------------------------------
+
+# The "how this file was made" note is for the human reader, not the model.
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def load(path: str | Path) -> str:
+    """Read a bible a human may have edited, as it is on disk right now.
+
+    A missing file simply means no bible: that is a normal way to work, not an
+    error. An existing file that cannot be read is an error, because silently
+    translating without the notes you wrote would be worse than stopping.
+    """
+    path = Path(path)
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise BibleError(f"could not read {path}: {exc}") from exc
+    return _HTML_COMMENT_RE.sub("", text).strip()
+
+
+@dataclass(frozen=True)
+class Notes:
+    """The hand-editable files beside one source, read fresh for this run."""
+
+    bible: str = ""
+    terms: list[glossary.Term] = field(default_factory=list)
+    bible_path: Path | None = None
+    glossary_path: Path | None = None
+
+    @property
+    def has_bible(self) -> bool:
+        return bool(self.bible.strip())
+
+    @property
+    def has_glossary(self) -> bool:
+        return self.glossary_path is not None
+
+
+def load_notes(source: str | Path) -> Notes:
+    """Read the bible and glossary beside `source`, right now.
+
+    Nothing is kept between calls or runs, so a hand edit applies to the very
+    next run with no rebuild step. A missing file is absent, not an error; an
+    unreadable bible or a broken glossary raises, so the caller can stop before
+    spending any money.
+    """
+    bible_path = srtio.sidecar_path(source, ".bible.md")
+    glossary_path = srtio.sidecar_path(source, ".glossary.toml")
+    return Notes(
+        bible=load(bible_path),
+        terms=glossary.load(glossary_path),
+        bible_path=bible_path if bible_path.exists() else None,
+        glossary_path=glossary_path if glossary_path.exists() else None,
+    )
