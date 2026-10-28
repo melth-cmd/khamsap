@@ -306,12 +306,31 @@ so translate each of them again from scratch, with extra care:
 - Do not repeat the earlier wording: write a fresh translation of the source."""
 
 
+# Added to the system prompt for --review. The same wire format comes back, so
+# a suggestion is validated exactly like a translation.
+REVIEW_RULES = """\
+This is a review pass. The checker flagged the lines below, and their current translations
+are shown with each one. For every entry, either write a better Thai line or repeat the
+current one unchanged if it is already right. A current line still in English means the
+earlier attempt failed: propose a Thai line for it.
+- Output every [ID] exactly once, in the same order, with the same number of lines.
+- Keep placeholders such as {0} exactly once, in their place.
+- Thai only, except glossary words marked "keep"; use the glossary spelling exactly.
+- Keep each line short enough to read at a glance."""
+
+
 def build_messages(
-    batch: Batch, bible: str = "", glossary: str = "", strict: bool = False
+    batch: Batch,
+    bible: str = "",
+    glossary: str = "",
+    strict: bool = False,
+    current: Mapping[int, str] | None = None,
 ) -> list[dict[str, str]]:
     """Build the chat messages for one batch.
 
-    `strict` adds the correction rules used by --fix for flagged lines.
+    `strict` adds the correction rules used by --fix for flagged lines. `current`
+    maps entry index -> the translation already made; it is shown to the model
+    and switches the prompt to the review rules (--review).
     """
     sections: list[str] = []
 
@@ -319,6 +338,16 @@ def build_messages(
         sections.append("[STORY BIBLE]\n" + bible.strip())
     if glossary.strip():
         sections.append("[GLOSSARY]\n" + glossary.strip())
+    if current:
+        shown = [
+            f"[{entry.index}] {current[entry.index]}"
+            for entry in batch.items
+            if entry.index in current
+        ]
+        if shown:
+            sections.append(
+                "[CURRENT TRANSLATIONS - flagged, improve or repeat]\n" + "\n".join(shown)
+            )
     if batch.before:
         sections.append(
             "[CONTEXT BEFORE - do not translate]\n"
@@ -331,7 +360,8 @@ def build_messages(
         )
     sections.append("[TRANSLATE]\n" + encode_entries(batch.items))
 
-    system = SYSTEM_PROMPT + ("\n\n" + FIX_RULES if strict else "")
+    rules = REVIEW_RULES if current else (FIX_RULES if strict else "")
+    system = SYSTEM_PROMPT + (f"\n\n{rules}" if rules else "")
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": "\n\n".join(sections)},

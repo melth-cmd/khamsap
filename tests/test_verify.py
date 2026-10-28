@@ -262,6 +262,8 @@ class FakeFile:
     sources: dict[int, str] = field(default_factory=dict)
     dropped: list[int] = field(default_factory=list)
     fixed: list[int] = field(default_factory=list)
+    reviewed: list[int] = field(default_factory=list)
+    suggestions: dict[int, str] = field(default_factory=dict)
 
 
 def test_verify_file_checks_every_entry():
@@ -403,12 +405,16 @@ def translated_file(
     sources: dict[int, str] | None = None,
     dropped: list[int] | None = None,
     fixed: list[int] | None = None,
+    reviewed: list[int] | None = None,
+    suggestions: dict[int, str] | None = None,
 ) -> FakeFile:
     return FakeFile(
         results=list(results),
         sources=sources or {},
         dropped=dropped or [],
         fixed=fixed or [],
+        reviewed=reviewed or [],
+        suggestions=suggestions or {},
     )
 
 
@@ -602,3 +608,64 @@ def test_no_fix_pass_means_no_fix_line():
         translated, verify.verify_file(translated), now=NOW
     )
     assert "Fix pass" not in text
+
+
+# --- review suggestions in the report --------------------------------------
+
+
+def test_suggestions_are_listed_near_the_top():
+    translated = translated_file(
+        entry(2, "ไปmarketนะ"), sources={2: "To the market."},
+        reviewed=[2], suggestions={2: "ไปตลาดนะ"},
+    )
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "Suggestions (from --review, nothing applied):" in text
+    assert "  [2] ไปตลาดนะ" in text
+    assert text.index("Suggestions") < text.index("Dropped before translation")
+
+
+def test_suggestions_are_sorted_by_entry():
+    translated = translated_file(
+        entry(1, "สวัสดี world"), entry(3, "ไปmarketนะ"),
+        sources={1: "Hello world.", 3: "To the market."},
+        reviewed=[1, 3], suggestions={3: "ไปตลาดนะ", 1: "สวัสดี"},
+    )
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert text.index("  [1] สวัสดี") < text.index("  [3] ไปตลาดนะ")
+
+
+def test_a_multi_line_suggestion_stays_on_one_line():
+    translated = translated_file(
+        entry(1, "หนึ่ง"), sources={1: "One.\nTwo."},
+        reviewed=[1], suggestions={1: "หนึ่ง\nสอง"},
+    )
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "  [1] หนึ่ง / สอง" in text
+
+
+def test_a_review_that_agreed_says_so():
+    translated = translated_file(
+        entry(1, "สวัสดี world"), sources={1: "Hello world."}, reviewed=[1]
+    )
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "Suggestions (from --review): none, it agreed with every flagged line" in text
+
+
+def test_no_review_means_no_suggestion_section():
+    translated = translated_file(entry(1, "สวัสดี"), sources={1: "Hello."})
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "Suggestions" not in text
+
+
+def test_one_line_collapses_blank_lines_too():
+    assert verify._one_line("  one\n\n two \n") == "one / two"

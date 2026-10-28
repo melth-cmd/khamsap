@@ -71,6 +71,9 @@ class TranslatedFile:
     usage: Usage = field(default_factory=Usage)
     # Entries re-translated by the --fix pass, for the report.
     fixed: list[int] = field(default_factory=list)
+    # Entries the --review pass looked at, and its proposed lines by index.
+    reviewed: list[int] = field(default_factory=list)
+    suggestions: dict[int, str] = field(default_factory=dict)
 
     @property
     def failures(self) -> list[EntryResult]:
@@ -158,6 +161,7 @@ def translate_subtitles(
     indexes: Collection[int] | None = None,
     ignore_cache: bool = False,
     seed: Mapping[int, str] | None = None,
+    current: Mapping[int, str] | None = None,
     **runner_kwargs,
 ) -> TranslatedFile:
     """Translate a whole file, batch by batch, keeping timestamps intact.
@@ -176,6 +180,8 @@ def translate_subtitles(
     `ignore_cache` re-requests every selected entry even if it is cached (the
     result is still written back), which is what --fix needs; `seed` supplies
     Thai text used as context only, e.g. the first pass when fixing a few lines.
+    `current` shows the existing translation to the model and switches to the
+    review prompt; --review uses it.
     """
     prepared = prepare(subtitles, strip_hi=strip_hi)
     result = TranslatedFile(dropped=list(prepared.dropped))
@@ -262,11 +268,21 @@ def translate_subtitles(
             if selected_terms
             else "",
         )
+        batch_current = (
+            {
+                entry.index: current[entry.index]
+                for entry in batch.items
+                if entry.index in current
+            }
+            if current is not None
+            else None
+        )
         batch_result: runner.BatchResult = runner.translate_batch(
             client,
             batch,
             bible=bible,
             glossary=glossary.for_prompt(selected_terms),
+            current=batch_current,
             **runner_kwargs,
         )
         result.usage = Usage(
@@ -512,6 +528,63 @@ def retranslate_flagged(
     return result
 
 
+def review_flagged(
+    client: llm.ChatClient,
+    subtitles: Sequence[srt.Subtitle],
+    result: TranslatedFile,
+    strip_hi: bool = False,
+    bible: str = "",
+    terms: Sequence[glossary.Term] = (),
+    **kwargs,
+) -> TranslatedFile:
+    """Ask the model to review the flagged entries (--review).
+
+    The flagged lines are sent again with the current translation shown, so the
+    model can either improve them or repeat them. A suggestion that matches the
+    line already in the file is dropped: there is nothing to decide then.
+
+    Nothing is written here: suggestions go into report.txt and the file keeps
+    its translation. The cache is not touched either, because advice is not a
+    translation of record. `limit`/`range_` are not re-applied, as in --fix.
+    """
+    verification = verify.verify_file(result, terms)
+    indexes = verification.entries
+    result.reviewed = list(indexes)
+    if not indexes:
+        log.info("--review: nothing flagged, nothing to review")
+        return result
+
+    log.info(
+        "--review: asking for suggestions on %d flagged entr%s",
+        len(indexes),
+        "y" if len(indexes) == 1 else "ies",
+    )
+    review_kwargs = {
+        key: value for key, value in kwargs.items() if key not in {"limit", "range_"}
+    }
+    reviewed = translate_subtitles(
+        client,
+        subtitles,
+        strip_hi=strip_hi,
+        bible=bible,
+        terms=terms,
+        cache=None,
+        indexes=indexes,
+        ignore_cache=True,
+        seed={entry.index: entry.text for entry in result.results if entry.ok},
+        current={entry.index: entry.text for entry in result.results},
+        **review_kwargs,
+    )
+
+    current = {entry.index: entry.text for entry in result.results}
+    result.suggestions = {
+        entry.index: entry.text
+        for entry in reviewed.results
+        if entry.ok and entry.text.strip() != current.get(entry.index, "").strip()
+    }
+    return result
+
+
 def translate_file(
     client: llm.ChatClient,
     source: str | Path,
@@ -523,6 +596,7 @@ def translate_file(
     bible: str = "",
     terms: Sequence[glossary.Term] = (),
     fix: bool = False,
+    review: bool = False,
     **kwargs,
 ) -> tuple[TranslatedFile, Path]:
     """Read, translate and write one file. Returns (result, output path).
@@ -533,7 +607,8 @@ def translate_file(
 
     With `fix`, the flagged entries are re-translated once, after the whole file
     is done and before anything is written, so the file never holds a half-fixed
-    state.
+    state. With `review`, the lines still flagged afterwards are reviewed and
+    the suggestions go into the report; they never change the subtitles.
     """
     source = Path(source)
     loaded = srtio.load_srt(source)
@@ -569,6 +644,16 @@ def translate_file(
             bible=bible,
             terms=terms,
             cache=cache,
+            **kwargs,
+        )
+    if review:
+        result = review_flagged(
+            client,
+            loaded.subtitles,
+            result,
+            strip_hi=strip_hi,
+            bible=bible,
+            terms=terms,
             **kwargs,
         )
     target = Path(output) if output is not None else srtio.output_path_for(source)

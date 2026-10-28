@@ -410,6 +410,11 @@ def layout_summary(translated: Verifiable) -> str:
     return "Layout repairs: " + ", ".join(parts)
 
 
+def _one_line(text: str) -> str:
+    """A whole suggestion on one line, so the advice stays short at the top."""
+    return " / ".join(part.strip() for part in text.split("\n") if part.strip())
+
+
 def _flag_block(flag: Flag) -> str:
     """One flag: its reason, then the source and the translation, line by line."""
     lines = [f"[{flag.index}] {flag.kind}", f"  reason: {flag.message}"]
@@ -460,6 +465,19 @@ def render_report(
         lines.append(f"Flags: {counts}")
     else:
         lines.append(f"Checked {checked}; nothing flagged.")
+
+    # --review advice, kept at the top so it is read before the details.
+    reviewed = getattr(translated, "reviewed", [])
+    suggestions = getattr(translated, "suggestions", {})
+    if reviewed:
+        if suggestions:
+            lines.append("Suggestions (from --review, nothing applied):")
+            for index in sorted(suggestions):
+                lines.append(f"  [{index}] {_one_line(suggestions[index])}")
+        else:
+            lines.append(
+                "Suggestions (from --review): none, it agreed with every flagged line"
+            )
 
     dropped = getattr(translated, "dropped", [])
     if dropped:

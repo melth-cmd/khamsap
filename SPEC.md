@@ -212,8 +212,9 @@ warning, and wire_format "json" is rejected until it is implemented.
                              Written after every translating run (reading it is never part
                              of a run), and also records entries dropped by HI cleanup and
                              line-count/dash repairs, with a merge rate to judge whether the
-                             prompt's line rule is working. --dry-run and --bible-only write
-                             no report. Report only: the .srt is never changed by checks.
+                             prompt's line rule is working, and the --review suggestions at
+                             the top. --dry-run and --bible-only write no report. Report
+                             only: the .srt is never changed by checks or review.
 
 Output naming: the ".en." tag becomes ".th." wherever it stands in the name, and ".th"
 is appended before the extension when there is no such tag:
@@ -321,8 +322,15 @@ are still flagged. On an already translated file only the fix pass costs anythin
 first pass is served from cache. --limit/--range apply to the first pass; the fix pass
 stays inside the same selection.
 
-Optional --review: a second LLM pass that sees only flagged lines plus context and
-proposes corrections (written to the report, applied only with --fix).
+Optional --review: a second LLM pass that sees only the flagged lines, each with its
+current translation, plus the surrounding context (and the same bible and glossary). For
+every line it answers with either an improved Thai line or the current one repeated; a
+repeat is dropped because there is nothing to decide. The suggestions go near the top of
+report.txt, one line per entry (`[12] <suggested Thai>`), so they are read before the
+details. They never change the .srt and are not cached: advice is not a translation of
+record, so a later run without --review keeps what the cache holds. --fix is the only
+thing that changes text; it re-translates the flagged lines. With --fix --review the fix
+runs first and the review looks at what is still flagged, and both are shown in one report.
 
 
 ### CLI

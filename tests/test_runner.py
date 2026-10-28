@@ -296,3 +296,12 @@ def test_strict_is_off_by_default(fake_client):
     fake_client.queue("[1] สวัสดี")
     run(batch_of([(1, "Hello.")]), fake_client)
     assert "correction pass" not in fake_client.calls[0][0]["content"]
+
+
+def test_current_translation_is_sent_to_the_model(fake_client):
+    fake_client.queue("[1] สวัสดี")
+    run(batch_of([(1, "Hello.")]), fake_client, current={1: "หวัดดี"})
+    assert "[CURRENT TRANSLATIONS - flagged, improve or repeat]\n[1] หวัดดี" in (
+        fake_client.calls[0][1]["content"]
+    )
+    assert "review pass" in fake_client.calls[0][0]["content"]

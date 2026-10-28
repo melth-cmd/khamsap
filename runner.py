@@ -129,6 +129,7 @@ def translate_batch(
     jitter: float = 0.25,
     max_retry_after: float = 120.0,
     strict: bool = False,
+    current: Mapping[int, str] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     rand: Callable[[], float] = random.random,
 ) -> BatchResult:
@@ -139,7 +140,8 @@ def translate_batch(
     retry uses `retry_temperature` to make a repeat less likely.
 
     `strict` adds the correction rules to the system prompt; --fix uses it for
-    lines the verification pass flagged.
+    lines the verification pass flagged. `current` shows the existing translation
+    and switches to the review rules; --review uses it and writes suggestions.
     """
     result = BatchResult()
     if not batch.items:
@@ -157,7 +159,9 @@ def translate_batch(
             before=batch.before,
             after=batch.after,
         )
-        messages = llm.build_messages(sub_batch, bible, glossary, strict=strict)
+        messages = llm.build_messages(
+            sub_batch, bible, glossary, strict=strict, current=current
+        )
         temperature = None if retries_used == 0 else retry_temperature
         result.calls += 1
 

@@ -386,3 +386,24 @@ def test_strict_messages_add_the_correction_rules():
 
 def test_non_strict_messages_do_not_mention_a_correction():
     assert "correction pass" not in llm.build_messages(make_batch(1))[0]["content"]
+
+
+def test_review_messages_show_only_the_current_translations_given():
+    messages = llm.build_messages(make_batch(2), current={1: "สวัสดี"})
+    user = messages[1]["content"]
+    section = user.split("[CURRENT TRANSLATIONS - flagged, improve or repeat]\n")[1]
+    section = section.split("\n\n")[0]
+    assert section == "[1] สวัสดี"
+
+
+def test_review_messages_use_the_review_rules():
+    messages = llm.build_messages(make_batch(1), current={1: "สวัสดี"})
+    system = messages[0]["content"]
+    assert llm.REVIEW_RULES.strip() in system
+    assert llm.FIX_RULES.strip() not in system
+    assert "review pass" in system
+
+
+def test_current_without_matching_entries_adds_no_section():
+    user = llm.build_messages(make_batch(1), current={99: "อื่น"})[1]["content"]
+    assert "CURRENT TRANSLATIONS" not in user

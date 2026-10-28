@@ -1000,3 +1000,42 @@ def test_fix_reports_what_still_fails(project, fake):
     assert status == 0
     assert out.subtitles[1].content == "ไปmarketนะ"
     assert "Fix pass: re-translated 1 entry (0 clean, 1 still flagged)" in report
+
+
+# --- --review (step 21) -----------------------------------------------------
+
+
+def test_review_puts_suggestions_in_the_report(project, fake, capsys):
+    fake.queue(MIXED_REPLIES).queue("[2] ไปตลาดนะ")
+    status = run(project, fake, project / "sample.en.srt", "--review")
+
+    out = srtio.load_srt(project / "sample.th.srt")
+    report = (project / "sample.report.txt").read_text(encoding="utf-8")
+    assert status == 0
+    assert fake.call_count == 2
+    assert out.subtitles[1].content == "ไปmarketนะ"  # review never changes the file
+    assert "Suggestions (from --review, nothing applied):" in report
+    assert "  [2] ไปตลาดนะ" in report
+    assert report.index("Suggestions") < report.index("[2] english_left")
+
+
+def test_review_makes_no_extra_call_when_nothing_is_flagged(project, fake):
+    fake.queue(REPLIES)
+    status = run(project, fake, project / "sample.en.srt", "--review")
+
+    assert status == 0
+    assert fake.call_count == 1
+    assert "Suggestions" not in (project / "sample.report.txt").read_text(encoding="utf-8")
+
+
+def test_fix_and_review_fix_then_advise(project, fake):
+    fake.queue(MIXED_REPLIES).queue("[2] ไปตลาดนะ")
+    status = run(project, fake, project / "sample.en.srt", "--fix", "--review")
+
+    out = srtio.load_srt(project / "sample.th.srt")
+    report = (project / "sample.report.txt").read_text(encoding="utf-8")
+    assert status == 0
+    assert fake.call_count == 2  # first pass, then the fix; review had nothing left
+    assert out.subtitles[1].content == "ไปตลาดนะ"
+    assert "Fix pass: re-translated 1 entry (all clean now)" in report
+    assert "Suggestions" not in report

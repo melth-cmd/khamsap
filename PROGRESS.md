@@ -386,7 +386,35 @@ Phase 5: Extras
      Known: a fatal error during the fix pass aborts before the .srt is written; the first
      pass is cached, so rerunning costs nothing. PROMPT_VERSION stays 1: a fixed line is
      cached as an ordinary result, which is what a later run should keep.
- 21. --review second pass
+ 21. [x] --review second pass
+     Agreed with user: the review reads the flagged lines and puts concise suggestions near
+     the top of report.txt. Decision: the suggestions are advice only and are not cached or
+     applied verbatim; --fix stays the only thing that changes the .srt (it re-translates
+     the same flagged lines). With --fix --review the fix runs first, review then looks at
+     whatever is still flagged, and both appear in the same report.
+     -> llm.py: REVIEW_RULES; build_messages(current=...) adds a
+        "[CURRENT TRANSLATIONS - flagged, improve or repeat]" section and switches the
+        system prompt to the review rules (review wins over --fix's correction rules).
+        Same tagged wire format, so a suggestion is validated and re-wrapped like any reply.
+     -> runner.py: current= parameter, forwarded to build_messages.
+     -> pipeline.py: translate_subtitles(current=...) passes each batch its own current Thai;
+        review_flagged() re-requests only the flagged indexes (cache=None so advice is never
+        stored, seed = the successful first pass, limit/range not re-applied), drops
+        suggestions identical to the current line, and records TranslatedFile.reviewed /
+        .suggestions. translate_file(review=True) runs it after fix, before writing.
+     -> verify.render_report(): "Suggestions (from --review, nothing applied):" with one
+        line per entry, "  [12] <Thai>"; multi-line suggestions collapse to "a / b"; a
+        review that changed nothing reads "none, it agreed with every flagged line". Placed
+        after the flag counts, before dropped/layout, so it is read first.
+     -> translate.py: --review flag, passed through translate_one().
+     Tests: 21 new (3 llm, 1 runner, 8 pipeline, 6 verify, 3 CLI) = 644 passing.
+     Fake-client run: only the flagged line was reviewed, with its current Thai and the
+     first pass as context; the suggestion appeared at the top of the report; the .srt and
+     the cache were unchanged; a repeated line produced no suggestion; --fix --review fixed
+     the line and made no review call; a failed fix was followed by a review of the same
+     line.
+     Known: review costs one call per batch of flagged lines (same max_retries budget);
+     its suggestions are not machine-applied, so applying one is a hand edit for now.
  22. Bilingual output option
  23. Other providers (different base URL + key env var)
  24. Saved settings are already covered by config.toml
@@ -435,9 +463,9 @@ Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plu
 post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is complete
 (item 15 pre-pass, item 16 reload the files each run, item 17 per-batch glossary +
 cache keys). Phase 4 is complete: item 18 added the checks (verify.py) and item 19 writes
-report.txt after every translating run. Phase 5 has started: item 20 (--fix) is done and
-re-translates flagged entries in the same run. Next is item 21: --review (a second pass
-that proposes corrections in the report, applied only with --fix).
+report.txt after every translating run. Phase 5 has started: item 20 (--fix) and item 21
+(--review suggestions in report.txt) are done. Next is item 22: bilingual output (English
+line above Thai), then item 23 (other providers).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -460,7 +488,8 @@ Modules (one line each)
   bible      pre-pass: chunk the script, prompt + merge the notes, write both files
   glossary   terms: validate, render, parse, load; per-batch selection + cache fingerprint
   layout     rewrap translated text to the source line count (dash / proportional)
-  verify     check a finished file against its sources; returns flags, changes nothing
+  verify     check a finished file against its sources; returns flags, renders report.txt
+             (with --review suggestions at the top), changes nothing
   pipeline   prepare -> batch -> translate -> restore -> rebuild -> write
   config     config.toml loading/validation, build_client
   translate  argparse CLI, multi-file pre-flight and run summary
@@ -499,9 +528,14 @@ Open threads carried forward
     when valid (a second failure keeps the earlier text) and go into the cache, so a rerun
     without --fix keeps them. The report's "Fix pass:" line describes the shipped file.
     The fix pass uses the first pass's Thai as before-context (never the English fallback).
-  - Item 21 (--review) is the next step: a second LLM pass over flagged lines that writes
-    proposals into report.txt. It needs the flags (verify.verify_file) and the current
-    text; it must not write the .srt. --fix is the only thing that changes text.
+  - Item 21 done: --review re-requests the flagged lines with their current Thai, records
+    suggestions on TranslatedFile.suggestions and prints them at the top of the report.
+    Advice is never cached and never applied; --fix is still the only thing that edits the
+    .srt. review_flagged() runs after the fix pass, so --fix --review fixes first and
+    reviews what remains.
+  - Next: item 22 (bilingual: English line above Thai, [output] bilingual already exists in
+    config and currently only warns). Then item 23 (other providers: base URL + key env
+    var), 25 (user manual), 26 (GUI discussion).
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;

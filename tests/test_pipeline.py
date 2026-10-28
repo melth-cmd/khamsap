@@ -791,3 +791,115 @@ def test_the_fix_pass_does_not_seed_english_as_context(tmp_path):
     fix_prompt = client.calls[1][1]["content"]
     assert "[1] Hello there." in fix_prompt
     assert "TH: Hello there." not in fix_prompt
+
+
+# --- --review (step 21) -----------------------------------------------------
+
+
+FIRST_PASS = "[1] สวัสดี\n[2] ไปmarketนะ\n[3] เจอกัน"
+
+
+def test_review_suggests_without_changing_the_file(tmp_path):
+    source = make_source(tmp_path, "Hello there.", "To the market.", "See you.")
+    client = FakeClient([FIRST_PASS, "[2] ไปตลาดนะ"])
+    result, target = pipeline.translate_file(
+        client, source, review=True, context_before=0, context_after=0,
+        sleep=lambda seconds: None,
+    )
+
+    assert client.call_count == 2
+    prompt = client.calls[1][1]["content"]
+    assert "[2] ไปmarketนะ" in prompt  # the current translation is shown
+    assert "[TRANSLATE]\n[2] To the market." in prompt
+    assert "Hello there." not in prompt  # only the flagged entry is sent
+    assert "review pass" in client.calls[1][0]["content"]
+    assert result.reviewed == [2]
+    assert result.suggestions == {2: "ไปตลาดนะ"}
+    assert [s.content for s in srtio.load_srt(target).subtitles][1] == "ไปmarketนะ"
+
+
+def test_review_suggestions_are_not_cached(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    pipeline.translate_file(
+        FakeClient(["[1] ไปmarketนะ", "[1] ไปตลาดนะ"]),
+        source,
+        review=True,
+        sleep=lambda seconds: None,
+    )
+
+    # Advice is not a translation of record: a later run without --review keeps
+    # what the cache holds, and makes no call.
+    second = FakeClient()
+    result, _ = pipeline.translate_file(second, source, sleep=lambda seconds: None)
+    assert second.call_count == 0
+    assert result.results[0].text == "ไปmarketนะ"
+
+
+def test_a_review_that_repeats_the_line_is_not_a_suggestion(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    client = FakeClient(["[1] ไปmarketนะ", "[1] ไปmarketนะ"])
+    result, _ = pipeline.translate_file(
+        client, source, review=True, sleep=lambda seconds: None
+    )
+    assert result.reviewed == [1]
+    assert result.suggestions == {}
+
+
+def test_review_does_nothing_when_nothing_is_flagged(tmp_path):
+    source = make_source(tmp_path, "Hello there.")
+    client = FakeClient(["[1] สวัสดี"])
+    result, _ = pipeline.translate_file(
+        client, source, review=True, sleep=lambda seconds: None
+    )
+    assert client.call_count == 1
+    assert result.reviewed == []
+    assert result.suggestions == {}
+
+
+def test_a_failed_review_reply_gives_no_suggestion(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    client = FakeClient(["[1] ไปmarketนะ", "[1] 你好"])
+    result, target = pipeline.translate_file(
+        client, source, review=True, max_retries=0, sleep=lambda seconds: None
+    )
+    assert client.call_count == 2
+    assert result.suggestions == {}
+    assert srtio.load_srt(target).subtitles[0].content == "ไปmarketนะ"
+
+
+def test_fix_runs_before_review(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    client = FakeClient(["[1] ไปmarketนะ", "[1] ไปตลาดนะ"])
+    result, _ = pipeline.translate_file(
+        client, source, fix=True, review=True, sleep=lambda seconds: None
+    )
+
+    # The fix cleaned the only flagged line, so review had nothing to do.
+    assert client.call_count == 2
+    assert result.fixed == [1]
+    assert result.reviewed == []
+    assert result.suggestions == {}
+
+
+def test_review_sees_the_lines_fix_could_not_repair(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    client = FakeClient(["[1] ไปmarketนะ", "[1] 你好", "[1] ไปตลาดนะ"])
+    result, target = pipeline.translate_file(
+        client, source, fix=True, review=True, max_retries=0, sleep=lambda seconds: None
+    )
+
+    assert client.call_count == 3
+    assert result.fixed == [1]
+    assert result.reviewed == [1]
+    assert result.suggestions == {1: "ไปตลาดนะ"}
+    # The failed fix kept the earlier text; review only advises.
+    assert srtio.load_srt(target).subtitles[0].content == "ไปmarketนะ"
+
+
+def test_review_works_without_a_cache(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    client = FakeClient(["[1] ไปmarketนะ", "[1] ไปตลาดนะ"])
+    result, _ = pipeline.translate_file(
+        client, source, review=True, use_cache=False, sleep=lambda seconds: None
+    )
+    assert result.suggestions == {1: "ไปตลาดนะ"}
