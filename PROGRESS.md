@@ -436,7 +436,20 @@ Phase 5: Extras
      Gemini native, Azure with api-key + api-version) still needs real work.
      Tests: 13 new (7 config: default/table/type/authorization/key-shaped/plumbing;
      6 llm: default_headers, none, looks_like_key cases) = 657 passing.
- 23. Easy to understand user manual
+ 23. [x] Easy to understand user manual
+     Agreed with user: README.md at the root, short sections, simple English, every command
+     with a one-line explanation, plus four short sections (report, bible/glossary, other
+     providers, troubleshooting + exit codes). No internals, no dev setup.
+     -> README.md (170 lines): what it does, install (uv and plain venv), first run,
+        commands (basic, several files, --dry-run, --bible-only, --force, --fix, --review,
+        --limit, --range, --output, --config, -v, and strip_hi as a config setting), the
+        five files it makes and their sidecar naming, reading report.txt with the common
+        flags, editing the bible/glossary (what re-translates what), another provider
+        (base_url/key_env/model + extra_headers), troubleshooting, exit codes.
+     -> SPEC.md: the CLI section no longer lists --strip-hi and --bilingual as flags; they
+        are config settings (strip_hi works, bilingual is planned item 25 and warns).
+        That was a SPEC/code mismatch, found while writing the manual.
+     Tests: none (docs only); suite still 657 passing.
  24. Discuss options for GUI
  25. Bilingual output option (English line above Thai)
      Moved to the bottom at the user's request: both languages in one subtitle is a
@@ -493,7 +506,8 @@ Phase 5 (now item 25) at the user's request and is parked for later. Item 22 (ot
 providers) is done for OpenAI-compatible APIs, with a note to revisit adapters later. The
 old "saved settings" item was removed: config.toml already holds every setting worth
 saving, and the few constants left (retry backoff, bible chunking, advisory length limits)
-are deliberately not user settings. Next actionable: item 23, the user manual.
+are deliberately not user settings. Item 23 (the user manual, README.md) is done. Next is
+item 24: discuss GUI options (the design still says GUI dropped, optional, probably never).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -567,8 +581,10 @@ Open threads carried forward
     endpoint, extra_headers covers providers that ask for headers, errors are neutral.
     Open thread: revisit item 22 to add adapters only if an Anthropic/Gemini/Azure key
     becomes necessary (different body/headers; not worth building speculatively).
-  - Next actionable: item 23, the user manual. Then 24 (GUI discussion) and 25 (bilingual
-    output, parked for later).
+  - Item 23 done: README.md is the user manual; SPEC's CLI list was corrected (no
+    --strip-hi/--bilingual flags; strip_hi is config, bilingual is item 25 and warns).
+  - Next: item 24, the GUI discussion (nothing to build unless the user asks; SPEC still
+    says GUI dropped / probably never). Then item 25, bilingual output, parked for later.
   - Settings audit (old item 23, removed): everything worth saving is already in
     config.toml ([llm], [batch], [output], [cleanup]). Left as code constants on purpose:
     retry backoff/jitter/temperature and the Retry-After cap (runner.py), bible chunk

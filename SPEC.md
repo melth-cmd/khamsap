@@ -370,10 +370,14 @@ runs first and the review looks at what is still flagged, and both are shown in 
                                               Refuses to overwrite existing files
                                               without --force (hand edits).
                                               --limit/--range restrict what it reads.
-  --strip-hi                                  drop [sound effects]/(descriptions) from output
   --fix, --review                             see Verification
-  --bilingual                                 English above Thai (planned, not built yet; warns)
   --config path.toml
+
+  [cleanup] strip_hi = true                   config, not a flag: drop [sound effects] and
+                                              (descriptions) before translating
+  [output] bilingual = false                  config, not a flag yet: English above Thai is
+                                              planned as the last Phase 5 item (25); a true
+                                              value warns and writes Thai only
 
 Every translated file also gets a report next to it (Movie.en.srt -> Movie.report.txt);
 each run prints the path on stderr. A report that cannot be written only warns, because
