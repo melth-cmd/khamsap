@@ -94,7 +94,14 @@ Phase 1: Core translator, command line
       Failed entries are never cached. use_cache=False bypasses it entirely.
       tests/test_cache.py 14 + 7 pipeline tests passing (231 total).
       Live: first CLI run 418 tokens, second run 0 tokens and identical output.
- 9. Context lines (previous English+Thai, next English)
+ 9. [x] Context lines (previous English+Thai, next English)
+      Built earlier (batcher.py step 3, cached-Thai context in step 8, config wiring in
+      step 7); this step verified the whole chain end to end.
+      -> translate.py passes [batch] context_before / context_after into pipeline, which
+         rebuilds batches each round so before-lines carry the Thai already produced.
+      Verified by tests/test_translate.py: context counts come from config, first batch has
+      no before-block, before-lines carry "TH:", after-lines never do, and context lines
+      never appear in the output file (233 tests passing).
  10. --limit/--range and --dry-run
  Test on a tiny sample first.
 

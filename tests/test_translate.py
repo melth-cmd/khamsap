@@ -141,3 +141,41 @@ def test_verbose_flag_logs_batches(project, fake, caplog):
     translate.main(
         [str(project / "sample.en.srt"), "--config", str(project / "config.toml"), "-v"]
     )
+
+
+# --- context (step 9) -------------------------------------------------------
+
+
+def test_context_counts_come_from_config(project, fake):
+    (project / "config.toml").write_text(
+        '[llm]\nmodel = "test/model"\n[batch]\nsize = 1\ncontext_before = 1\ncontext_after = 1\n',
+        encoding="utf-8",
+    )
+    fake.queue("[1] สวัสดี").queue("[2] สบายดีไหม").queue("[3] {0}สบายดี{1}")
+    status = translate.main(
+        [str(project / "sample.en.srt"), "--config", str(project / "config.toml")]
+    )
+    assert status == 0
+    assert fake.call_count == 3  # size = 1
+
+    first = fake.calls[0][1]["content"]
+    second = fake.calls[1][1]["content"]
+
+    assert "[CONTEXT BEFORE - do not translate]" not in first  # nothing behind it
+    assert "[CONTEXT BEFORE - do not translate]\n[1] Hello there.\nTH: สวัสดี" in second
+
+    after_block = second.split("[CONTEXT AFTER - do not translate]")[1].split("[TRANSLATE]")[0]
+    assert "Fine, thanks." in after_block  # next line, English only
+    assert "TH:" not in after_block
+
+
+def test_context_is_not_part_of_the_output(project, fake):
+    (project / "config.toml").write_text(
+        '[llm]\nmodel = "test/model"\n[batch]\nsize = 1\ncontext_before = 2\n',
+        encoding="utf-8",
+    )
+    fake.queue("[1] สวัสดี").queue("[2] สบายดีไหม").queue("[3] {0}สบายดี{1}")
+    translate.main([str(project / "sample.en.srt"), "--config", str(project / "config.toml")])
+    output = srtio.load_srt(project / "sample.th.srt")
+    assert [s.index for s in output.subtitles] == [1, 2, 3]
+    assert [s.content for s in output.subtitles] == ["สวัสดี", "สบายดีไหม", "<i>สบายดี</i>"]
