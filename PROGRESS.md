@@ -506,6 +506,48 @@ Phase 5: Extras
   tests/test_llm.py (the "pasted into key_env" test). The real key is 73 chars, lives in
   .env only, is not in any tracked file, and does not share that prefix. .env is untracked.
 
+### KNOWN BUGS (from the PEN15 live test)
+
+Live test, plain README command on PEN15 (2019) S01E01 - 720p.en.hi.srt (535 entries, no
+bible or glossary): exit 0, 11m45s, 74,728 tokens, ~$0.05 on the OpenRouter dashboard,
+535/535 entries, timestamps and indexes intact, 19 flagged (1 failed, 18 english_left).
+The user judged the Thai good. The five bugs below, in the order they matter.
+
+1. Mid-word line splits (layout.py). When the model merges a multi-line entry and the Thai
+   has no space near the proportional split point, layout.py falls back to a character
+   offset and cuts inside a word: 4 of 16 repairs did this ([266] เธ|อ, [275] แค|่,
+   [292] เป็|น, [293] เ|ธอ). Suggestion: never split at a character; if no acceptable
+   space is within a margin of the target, leave the entry merged and report it as not
+   repaired. Add these four real cases to test_layout.py first, so the rule is measurable.
+
+2. english_left noise when there is no glossary. 18 of the 19 flags were proper nouns and
+   brands the model rightly kept (UGIS x12, AOL, Care Bear, Ace Ventura, M.A.C, DD,
+   "yeah"), so a clean file looks like 18 mistakes; bracketed song titles were skipped
+   entirely because bracket-only text counts as non-verbal. Suggestion: with no glossary
+   keep list, report leftover English as one advisory line per file instead of one flag per
+   entry, and keep per-entry flags for words the glossary expects to change. Treat
+   capitalised words and acronyms as a separate, quieter kind.
+
+3. A line that is only an English acronym can never pass validation. [347] "-UGIS.\n-UGIS."
+   came back in English four times and stayed English with missing_thai, although UGIS is
+   kept consistently everywhere else; a glossary "keep" term would not help, because the
+   validator still demands Thai. Suggestion: let an entry whose source is entirely
+   glossary "keep" terms, or a bare Latin acronym, pass without Thai and be flagged as
+   kept. Cover it with a test in test_llm.py.
+
+4. --dry-run underestimates tokens and cost. The estimate said ~17,301 tokens / $0.0122;
+   the run used 74,728 tokens and cost ~$0.05 (4.3x and 4x), and the summary gives only one
+   total so prompt versus completion (or reasoning tokens) cannot be told apart.
+   Suggestion: print prompt and completion tokens separately in the summary and report,
+   and calibrate the dry-run ratios against a few real episodes, or show a range. Keep the
+   ratios as constants until the numbers improve.
+
+5. Long runs are silent. Without -v the tool printed the bible hint and the final summary
+   only; an episode takes ~12 minutes, so it looks stuck. Suggestion: always print a
+   one-line "batch n/m" progress to stderr for real runs (keep -v for the detail), or at
+   least a "translating 535 entries in 9 batches..." line at the start. Mention the choice
+   in the README first-run section.
+
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
@@ -605,6 +647,8 @@ Open threads carried forward
   - Item 24 done as a discussion: no GUI now; if one is built later, PySide6 single window
     is the recommendation and service.py is the prep work (see the item note above).
     Item 25 (bilingual output) stays parked for later.
+  - Known bugs from the live PEN15 run are listed in the KNOWN BUGS section above. The
+    layout mid-word split (bug 1) is the first one worth fixing: it corrupts visible text.
   - Settings audit (old item 23, removed): everything worth saving is already in
     config.toml ([llm], [batch], [output], [cleanup]). Left as code constants on purpose:
     retry backoff/jitter/temperature and the Retry-After cap (runner.py), bible chunk
