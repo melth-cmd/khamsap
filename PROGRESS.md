@@ -254,7 +254,34 @@ Phase 3: Story bible and glossary
       moved the estimate by 19 prompt tokens on the next run, so it is re-read every time.
       Known: until item 17 the bible is not in the cache key, so a bible edit does not
       re-translate cached lines (the CLI reload test deletes the cache for that reason).
- 17. Inject bible (short form) and per-batch glossary entries into every request
+ 17. [x] Inject bible (short form) and per-batch glossary entries into every request
+      -> glossary.py: matching() (whole word, case-insensitive, "Gandalf's" matches,
+         "Mai" does not match "Maid", glossary order kept), for_prompt() renders the
+         chosen terms as "Gandalf = transliterate: แกนดัล์ฟ" / "NASA = keep",
+         fingerprint(terms, bible) is sorted by English word (reordering the file
+         invalidates nothing) and is "" when there are no terms and no bible, so caches
+         made before this step stay valid for files that still have neither.
+      -> pipeline.py: batch_terms() / glossary_for_batch() are the one definition of
+         "relevant": words in the batch's own items, never the context lines. Each batch
+         sends only those terms; a batch using none gets no [GLOSSARY] section at all.
+         translate_file builds the cache callable from fingerprint(matching(term, entry),
+         bible): editing one term drops only the lines containing it, editing the bible
+         drops the whole file (agreed; one file must not mix registers). estimate() counts
+         the bible and each batch's glossary, so --dry-run matches what is sent.
+         -v now reports ", N glossary terms" on the batch line.
+      -> translate.py: hands notes.terms to the pipeline; --dry-run gives them to the
+         estimate. The bible reached requests in step 16 through the same path.
+      tests: 500 passing (28 new: glossary matching/rendering/fingerprint, per-batch
+      selection, cache invalidation by term and by bible, estimate, CLI).
+      Live (demo scene, bible + 9 terms):
+        - full run: "Batch 1/1: 14 entries, 9 glossary terms", 1,898 tokens;
+        - rerun: 14 cached, 0 tokens;
+        - Toyota changed to transliterate: "13 cached, 1 stale", "1 entry, 4 glossary
+          terms", and โตโยต้า appeared in that line of the output;
+        - one bible line added: all 14 stale (2 sent with --limit 2), so the digest works.
+      Without a bible or glossary nothing changes: no sections, no terms, same output
+      (confirmed live: 456 tokens for the 3-line fixture and one hint line).
+      Phase 3 complete.
 
 Phase 4: Verification
  18. Leftover English, glossary consistency, tag mismatch (reading speed DROPPED: not a
@@ -311,10 +338,10 @@ Phase 5: Extras
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
-post-phase line-break work). Phase 2 is complete (items 11-14). Item 15 (story bible +
-glossary pre-pass) and item 16 (load both hand-editable files, reload them every run,
-bible already sent) are complete. Next is item 17: inject the per-batch glossary entries
-and put the glossary + bible digest into the cache key.
+post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is complete
+(item 15 pre-pass, item 16 reload the files each run, item 17 per-batch glossary +
+cache keys). Next is Phase 4, item 18: the verification checks (report only, no
+auto-fix); item 19 writes report.txt.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -335,25 +362,23 @@ Modules (one line each)
   runner     one batch: retry only failures, backoff, English fallback
   cache      per-entry JSON cache, atomic saves
   bible      pre-pass: chunk the script, prompt + merge the notes, write both files
-  glossary   glossary.toml terms: validate, render, parse, load, unique
+  glossary   terms: validate, render, parse, load; per-batch selection + cache fingerprint
   layout     rewrap translated text to the source line count (dash / proportional)
   pipeline   prepare -> batch -> translate -> restore -> rebuild -> write
   config     config.toml loading/validation, build_client
   translate  argparse CLI, multi-file pre-flight and run summary
 
 Open threads carried forward
-  - Item 11 done: the cache takes a `glossary` callable. Item 17 must pass
-    "digest(applicable glossary terms) + digest(bible)" from that callable wherever
-    Cache(...) is built (pipeline.translate_file builds it today; translate_file has no
-    pass-through parameter yet). Decision: a bible edit re-translates the file.
-  - Item 16 done: both files are read once per run by bible.load_notes(); the bible is
-    already in every request; a broken glossary exits 2 before any call; missing files
-    get one hint per run. A normal run still never calls the pre-pass (agreed).
-  - Item 17 needs: per-batch glossary selection (terms whose English appears in the batch
-    items; context lines are for understanding, so they probably should not pull terms in),
-    injection via the glossary= parameter that already exists,
-    the cache callable (digest of those terms + digest of the bible), and the glossary
-    share of the --dry-run estimate (the bible share is already counted).
+  - Item 17 done: each batch gets only the terms whose word is in its own items
+    (pipeline.batch_terms), the cache callable is
+    glossary.fingerprint(matching(term, entry), bible), and --dry-run counts both.
+    Editing a term re-translates the lines using it; editing the bible re-translates the
+    file. With no notes the fingerprint is "" so older caches stay valid.
+  - Item 16 done: both files are read once per run by bible.load_notes(); a broken
+    glossary exits 2 before any call; missing files get one hint per run. A normal run
+    still never calls the pre-pass (agreed).
+  - A cache written before step 17 for a file that has a bible or glossary is stale once
+    (the key gains the notes digest). With no notes, nothing is invalidated.
   - PROMPT_VERSION is still 1 and was deliberately NOT bumped for the line-break prompt rule:
     old entries are repaired on read by layout.py, so bumping would have thrown away every
     cache for a layout fix.
@@ -362,7 +387,7 @@ Open threads carried forward
     (rewrapped / dashes_restored) for the item 18 report.
   - report.txt is not written yet (item 19). Failures and rewraps live in
     EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
-  - verify.py is still empty; bible.py and glossary.py are written (item 15).
+  - verify.py is still empty; bible.py and glossary.py are written (items 15-17).
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;

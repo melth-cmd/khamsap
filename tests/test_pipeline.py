@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import srt
 
+import glossary
 import pipeline
 import srtio
 from batcher import SourceEntry
@@ -487,3 +488,156 @@ def test_cache_stores_the_raw_model_output(tmp_path):
 
     data = json.loads((tmp_path / "c.cache.json").read_text(encoding="utf-8"))
     assert data["entries"]["1"]["text"] == "หนึ่ง สอง"  # un-rewrapped
+
+
+# --- per-batch glossary and cache keys (step 17) ----------------------------
+
+THAI = "แกนดัล์ฟ"
+
+
+def gandalf(spelling: str = THAI) -> "glossary.Term":
+    return glossary.Term("Gandalf", "transliterate", spelling)
+
+
+def test_only_terms_in_the_batch_are_sent():
+    from conftest import FakeClient
+
+    subtitles = [subtitle(1, "Gandalf speaks."), subtitle(2, "Hello.")]
+    client = FakeClient(["[1] แกนดัล์ฟพูด", "[2] สวัสดี"])
+    run(
+        client,
+        subtitles,
+        size=1,
+        context_before=0,
+        context_after=0,
+        terms=[gandalf(), glossary.Term("wizard", "translate", "พ่อมด")],
+    )
+
+    first = client.calls[0][1]["content"]
+    assert f"[GLOSSARY]\nGandalf = transliterate: {THAI}" in first
+    assert "wizard" not in first
+    assert "[GLOSSARY]" not in client.calls[1][1]["content"]
+
+
+def test_a_term_only_in_a_context_line_is_not_sent():
+    from conftest import FakeClient
+
+    subtitles = [
+        subtitle(1, "Gandalf speaks."),
+        subtitle(2, "Hello."),
+        subtitle(3, "Goodbye."),
+    ]
+    client = FakeClient(["[2] สวัสดี"])
+    run(
+        client,
+        subtitles,
+        range_="2-2",
+        context_before=1,
+        context_after=1,
+        terms=[gandalf()],
+    )
+
+    prompt = client.calls[0][1]["content"]
+    assert "Gandalf speaks." in prompt  # still shown as context
+    assert "[GLOSSARY]" not in prompt
+
+
+def test_batch_terms_and_glossary_for_batch_use_only_the_items():
+    from batcher import SourceEntry
+
+    batch = pipeline.batcher.make_batches(
+        [SourceEntry(1, "Gandalf"), SourceEntry(2, "Hi")], size=1
+    )[0]
+    assert pipeline.batch_terms([gandalf()], batch) == [gandalf()]
+    assert pipeline.glossary_for_batch([gandalf()], batch) == (
+        f"Gandalf = transliterate: {THAI}"
+    )
+    assert pipeline.glossary_for_batch([], batch) == ""
+
+
+def make_source(tmp_path, *lines: str) -> Path:
+    source = tmp_path / "movie.en.srt"
+    srtio.write_srt(
+        source, [subtitle(number, text, start_s=number * 3) for number, text in enumerate(lines, 1)]
+    )
+    return source
+
+
+def test_editing_a_term_retranslates_only_the_lines_it_touches(tmp_path):
+    from conftest import FakeClient
+
+    source = make_source(tmp_path, "Gandalf speaks.", "Hello.", "Goodbye.")
+    first = FakeClient(["[1] แกนดัล์ฟพูด\n[2] สวัสดี\n[3] ลาก่อน"])
+    pipeline.translate_file(
+        first, source, terms=[gandalf()], context_before=0, context_after=0,
+        sleep=lambda seconds: None,
+    )
+
+    second = FakeClient(["[1] กันดาล์ฟพูด"])
+    pipeline.translate_file(
+        second, source, terms=[gandalf("กันดาล์ฟ")], context_before=0, context_after=0,
+        sleep=lambda seconds: None,
+    )
+
+    assert second.call_count == 1
+    prompt = second.calls[0][1]["content"]
+    assert "[TRANSLATE]\n[1] Gandalf speaks." in prompt
+    assert "Hello." not in prompt and "Goodbye." not in prompt
+    assert "กันดาล์ฟ" in prompt
+
+
+def test_unchanged_notes_still_hit_the_cache(tmp_path):
+    from conftest import FakeClient
+
+    source = make_source(tmp_path, "Gandalf speaks.", "Hello.")
+    pipeline.translate_file(
+        FakeClient(["[1] แกนดัล์ฟพูด\n[2] สวัสดี"]), source, terms=[gandalf()],
+        sleep=lambda seconds: None,
+    )
+
+    second = FakeClient()
+    result, _ = pipeline.translate_file(
+        second, source, terms=[gandalf()], sleep=lambda seconds: None
+    )
+    assert second.call_count == 0
+    assert all(entry.from_cache for entry in result.results)
+
+
+def test_editing_the_bible_retranslates_every_line(tmp_path):
+    from conftest import FakeClient
+
+    source = make_source(tmp_path, "Hello.", "Goodbye.")
+    pipeline.translate_file(
+        FakeClient(["[1] สวัสดี\n[2] ลาก่อน"]), source,
+        bible="Somsak is the father.", sleep=lambda seconds: None,
+    )
+
+    second = FakeClient(["[1] สวัสดีจ้ะ\n[2] ลาก่อนนะ"])
+    pipeline.translate_file(
+        second, source, bible="Somsak is the mother.", sleep=lambda seconds: None
+    )
+    assert second.call_count == 1
+    prompt = second.calls[0][1]["content"]
+    assert "[1] Hello." in prompt and "[2] Goodbye." in prompt
+    assert "Somsak is the mother." in prompt
+
+
+def test_estimate_counts_the_batch_glossary():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    term = glossary.Term("Hello", "translate", "สวัสดี")
+    without = pipeline.estimate(loaded.subtitles, size=1)
+    with_term = pipeline.estimate(loaded.subtitles, size=1, terms=[term])
+
+    expected = (
+        len(glossary.for_prompt([term])) + pipeline.GLOSSARY_OVERHEAD_CHARS
+    ) / pipeline.CHARS_PER_PROMPT_TOKEN
+    assert with_term.prompt_tokens - without.prompt_tokens == pytest.approx(expected, abs=1)
+
+
+def test_a_term_that_never_appears_changes_nothing_in_the_estimate():
+    loaded = srtio.load_srt(FIXTURES / "simple.srt")
+    absent = glossary.Term("Zeus", "keep")
+    assert (
+        pipeline.estimate(loaded.subtitles, terms=[absent]).prompt_tokens
+        == pipeline.estimate(loaded.subtitles).prompt_tokens
+    )

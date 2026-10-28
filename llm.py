@@ -268,7 +268,8 @@ Rules:
 - Subtitles are read quickly: be concise.
 - Thai subtitle convention: spaces instead of commas and periods.
 - Use the story bible for pronouns, particles and register per speaker.
-- Follow the glossary exactly: keep terms marked "keep", use the given spelling otherwise.
+- Follow the glossary exactly: a term marked "keep" stays in English; for "transliterate"
+  or "translate", use the Thai given after the colon every time.
 - Translate song lyrics for meaning; keep the music markers.
 - Profanity: translate at equivalent strength; do not soften it.
 - Idioms: translate the meaning, not the words.

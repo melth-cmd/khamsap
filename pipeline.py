@@ -25,6 +25,7 @@ import srt
 
 import batcher
 import cache as cache_module
+import glossary
 import hi
 import layout
 import llm
@@ -115,6 +116,25 @@ def prepare(subtitles: Sequence[srt.Subtitle], strip_hi: bool = False) -> Prepar
     return prepared
 
 
+def batch_terms(
+    terms: Sequence[glossary.Term], batch: batcher.Batch
+) -> list[glossary.Term]:
+    """The terms whose word appears in this batch's items.
+
+    Context lines are deliberately not searched: they are there to explain the
+    batch, and a word in a neighbouring line is no reason to add a term.
+    """
+    text = "\n".join(entry.text for entry in batch.items)
+    return glossary.matching(terms, text)
+
+
+def glossary_for_batch(
+    terms: Sequence[glossary.Term], batch: batcher.Batch
+) -> str:
+    """The glossary text for one batch: only the terms that batch uses."""
+    return glossary.for_prompt(batch_terms(terms, batch))
+
+
 def translate_subtitles(
     client: llm.ChatClient,
     subtitles: Sequence[srt.Subtitle],
@@ -123,7 +143,7 @@ def translate_subtitles(
     context_before: int = 4,
     context_after: int = 2,
     bible: str = "",
-    glossary: str = "",
+    terms: Sequence[glossary.Term] = (),
     cache: cache_module.Cache | None = None,
     limit: int | None = None,
     range_: str | tuple[int, int] | None = None,
@@ -133,6 +153,10 @@ def translate_subtitles(
 
     With a cache, entries already translated are not sent again; they still
     count as context, so resumed batches see the same Thai they would have.
+
+    `terms` is the whole glossary; each batch is sent only the terms whose word
+    actually appears in that batch, which keeps the request small and focused.
+    The bible is short enough to send with every batch.
 
     With `limit` or `range_`, only those entries are translated and written.
     Context is still drawn from the whole file, so a slice is translated with
@@ -204,9 +228,24 @@ def translate_subtitles(
             translated=translated,
         )[number - 1]
 
-        log.info("Batch %d/%d: %d entries", number, batch_count, len(batch))
+        selected_terms = batch_terms(terms, batch)
+        log.info(
+            "Batch %d/%d: %d entr%s%s",
+            number,
+            batch_count,
+            len(batch),
+            "y" if len(batch) == 1 else "ies",
+            f", {len(selected_terms)} glossary "
+            f"term{'' if len(selected_terms) == 1 else 's'}"
+            if selected_terms
+            else "",
+        )
         batch_result: runner.BatchResult = runner.translate_batch(
-            client, batch, bible=bible, glossary=glossary, **runner_kwargs
+            client,
+            batch,
+            bible=bible,
+            glossary=glossary.for_prompt(selected_terms),
+            **runner_kwargs,
         )
         result.usage = Usage(
             prompt_tokens=result.usage.prompt_tokens + batch_result.usage.prompt_tokens,
@@ -291,6 +330,7 @@ CHARS_PER_PROMPT_TOKEN = 3.2
 CHARS_PER_COMPLETION_TOKEN = 2.2
 PROMPT_OVERHEAD_CHARS = 40  # section labels and [ID] prefixes
 BIBLE_OVERHEAD_CHARS = len("[STORY BIBLE]\n\n")
+GLOSSARY_OVERHEAD_CHARS = len("[GLOSSARY]\n\n")
 
 
 @dataclass
@@ -318,13 +358,14 @@ def estimate(
     limit: int | None = None,
     range_: str | tuple[int, int] | None = None,
     bible: str = "",
+    terms: Sequence[glossary.Term] = (),
     input_usd_per_mtok: float = 0.0,
     output_usd_per_mtok: float = 0.0,
 ) -> Estimate:
     """Predict batch count, tokens and cost for a run, with no API calls.
 
-    A story bible goes with every request, so its length is counted once per
-    batch. The glossary follows the same rule once item 17 sends it.
+    The bible and the batch's glossary go with every request, so both are
+    counted once per batch, exactly as translate_subtitles sends them.
     """
     prepared = prepare(subtitles, strip_hi=strip_hi)
     selected = batcher.select_range(prepared.entries, limit=limit, range_=range_)
@@ -341,6 +382,9 @@ def estimate(
         prompt_chars += len(llm.SYSTEM_PROMPT) + PROMPT_OVERHEAD_CHARS
         if bible.strip():
             prompt_chars += len(bible) + BIBLE_OVERHEAD_CHARS
+        batch_terms = glossary_for_batch(terms, batch)
+        if batch_terms:
+            prompt_chars += len(batch_terms) + GLOSSARY_OVERHEAD_CHARS
         prompt_chars += sum(len(item.text) for item in batch.items)
         prompt_chars += sum(len(line.text) + len(line.thai or "") for line in batch.before)
         prompt_chars += sum(len(line.text) for line in batch.after)
@@ -370,22 +414,40 @@ def translate_file(
     strip_hi: bool = False,
     use_cache: bool = True,
     model: str = "",
+    bible: str = "",
+    terms: Sequence[glossary.Term] = (),
     **kwargs,
 ) -> tuple[TranslatedFile, Path]:
-    """Read, translate and write one file. Returns (result, output path)."""
+    """Read, translate and write one file. Returns (result, output path).
+
+    `bible` and `terms` are the hand-editable notes for this file. They are part
+    of every cache key: editing a term drops the lines that use that word, and
+    editing the bible drops everything, because register is shared.
+    """
     source = Path(source)
     loaded = srtio.load_srt(source)
     if loaded.skipped:
         log.warning("%s: %d malformed block(s) were skipped", source.name, loaded.skipped)
 
+    def notes_key(index: int, text: str) -> str:
+        return glossary.fingerprint(glossary.matching(terms, text), bible)
+
     cache = None
     if use_cache:
         cache = cache_module.Cache(
-            srtio.sidecar_path(source, ".cache.json"), model=model
+            srtio.sidecar_path(source, ".cache.json"),
+            model=model,
+            glossary=notes_key,
         ).load()
 
     result = translate_subtitles(
-        client, loaded.subtitles, strip_hi=strip_hi, cache=cache, **kwargs
+        client,
+        loaded.subtitles,
+        strip_hi=strip_hi,
+        bible=bible,
+        terms=terms,
+        cache=cache,
+        **kwargs,
     )
     target = Path(output) if output is not None else srtio.output_path_for(source)
     srtio.write_srt(target, result.subtitles, encoding=encoding)

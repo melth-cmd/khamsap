@@ -8,15 +8,20 @@ hand. Each term says what to do with one English word or phrase:
   translate      write its Thai meaning, as given in th
 
 Parsing is strict: a typo in a hand-edited file is reported with the term that
-caused it, rather than silently changing how a name is spelled. Selecting the
-terms that belong to one batch (and the cache fingerprint they feed) is item 17,
-which is why nothing here knows about batching yet.
+caused it, rather than silently changing how a name is spelled.
+
+For translation, matching() picks the terms whose English word actually appears
+in a batch, for_prompt() renders just those for the request, and fingerprint()
+summarises them (plus the story bible) for the cache key, so editing one term
+re-translates only the lines that word touches.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,3 +195,61 @@ def unique(terms: Sequence[Term]) -> list[Term]:
         seen.add(key)
         kept.append(term)
     return kept
+
+
+# --- what one batch needs ---------------------------------------------------
+
+FINGERPRINT_CHARS = 32
+
+
+def matching(terms: Sequence[Term], text: str) -> list[Term]:
+    """The terms whose English word appears in `text`, in glossary order.
+
+    Word boundaries keep "He" out of "the" and "Mai" out of "Maid"; case does
+    not matter, and an apostrophe after a name ("Gandalf's") still matches.
+    """
+    found: list[Term] = []
+    for term in terms:
+        pattern = r"(?<!\w)" + re.escape(term.en) + r"(?!\w)"
+        if re.search(pattern, text, re.IGNORECASE):
+            found.append(term)
+    return found
+
+
+def for_prompt(terms: Sequence[Term]) -> str:
+    """Render the selected terms for the model, one line each.
+
+    Short on purpose: this goes with every batch that uses any of these words.
+    """
+    lines: list[str] = []
+    for term in terms:
+        if term.action == "keep":
+            lines.append(f"{term.en} = keep")
+        else:
+            lines.append(f"{term.en} = {term.action}: {term.th}")
+    return "\n".join(lines)
+
+
+def fingerprint(terms: Sequence[Term], bible: str = "") -> str:
+    """What the cache must remember about the notes behind one entry.
+
+    Sorted by English word, so reordering the file invalidates nothing. The
+    bible is included whole: any line's register can depend on it. With no
+    terms and no bible this returns "" rather than a hash, which keeps caches
+    made before the glossary existed valid for files that still have none.
+    """
+    if not terms and not bible.strip():
+        return ""
+
+    payload = json.dumps(
+        {
+            "bible": bible,
+            "terms": [
+                [term.en, term.action, term.th]
+                for term in sorted(terms, key=lambda term: term.en.casefold())
+            ],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:FINGERPRINT_CHARS]

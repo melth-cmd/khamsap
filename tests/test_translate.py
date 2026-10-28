@@ -584,6 +584,14 @@ def write_bible(project: Path, text: str = BIBLE_TEXT, name: str = "sample.bible
     return path
 
 
+def write_glossary(
+    project: Path, *terms: glossary.Term, name: str = "sample.glossary.toml"
+) -> Path:
+    path = project / name
+    path.write_text(glossary.render(terms), encoding="utf-8")
+    return path
+
+
 def test_the_bible_is_sent_with_the_request(project, fake, capsys):
     write_bible(project)
     fake.queue(REPLIES)
@@ -603,11 +611,11 @@ def test_a_hand_edit_applies_to_the_next_run(project, fake):
     run(project, fake, source)
     assert "Somsak is the father." in fake.calls[0][1]["content"]
 
-    (project / "sample.cache.json").unlink()  # until item 17, the bible is not in the key
-    write_bible(project, "Mai is the daughter.\n")
+    write_bible(project, "Mai is the daughter.\n")  # the bible is part of every cache key
     fake.queue(REPLIES)
     run(project, fake, source)
 
+    assert fake.call_count == 2
     assert "Mai is the daughter." in fake.calls[1][1]["content"]
     assert "Somsak is the father." not in fake.calls[1][1]["content"]
 
@@ -634,7 +642,7 @@ def test_the_hint_counts_missing_files(project, fake, capsys):
     assert "no story bible for 2 of 2 files" in capsys.readouterr().err
 
 
-def test_the_glossary_is_loaded_but_not_sent_yet(project, fake):
+def test_the_glossary_is_loaded_with_its_terms(project, fake):
     write_bible(project)
     (project / "sample.glossary.toml").write_text(
         glossary.render([glossary.Term("NASA", "keep")]), encoding="utf-8"
@@ -749,4 +757,79 @@ def test_dry_run_counts_the_bible(project, fake, capsys):
     with_bible = _prompt_tokens(capsys.readouterr().out)
 
     assert with_bible > without
+    assert fake.call_count == 0
+
+
+# --- glossary injection and cache keys (step 17) ----------------------------
+
+NO_CONTEXT = '[llm]\nmodel = "test/model"\n[batch]\ncontext_before = 0\ncontext_after = 0\n'
+
+
+def test_glossary_goes_only_with_the_batches_that_use_it(project, fake):
+    (project / "config.toml").write_text(
+        NO_CONTEXT.replace("[batch]", "[batch]\nsize = 1"), encoding="utf-8"
+    )
+    write_glossary(project, glossary.Term("Hello", "translate", "สวัสดี"))
+    fake.queue("[1] สวัสดี").queue("[2] สบายดีไหม").queue("[3] {0}สบายดี{1}")
+
+    status = run(project, fake, copy(project, "sample.en.srt"))
+
+    assert status == 0
+    assert "[GLOSSARY]\nHello = translate: สวัสดี" in fake.calls[0][1]["content"]
+    assert "[GLOSSARY]" not in fake.calls[1][1]["content"]
+    assert "[GLOSSARY]" not in fake.calls[2][1]["content"]
+
+
+def test_editing_a_term_re_translates_only_its_lines(project, fake):
+    (project / "config.toml").write_text(NO_CONTEXT, encoding="utf-8")
+    source = copy(project, "sample.en.srt")
+    write_glossary(project, glossary.Term("Hello", "translate", "สวัสดี"))
+
+    fake.queue(REPLIES)
+    run(project, fake, source)
+    assert fake.call_count == 1
+
+    assert run(project, fake, source) == 0  # unchanged notes: everything cached
+    assert fake.call_count == 1
+
+    write_glossary(project, glossary.Term("Hello", "translate", "หวัดดี"))
+    fake.queue("[1] หวัดดี")
+    status = run(project, fake, source)
+
+    assert status == 0
+    assert fake.call_count == 2
+    prompt = fake.calls[-1][1]["content"]
+    assert "[TRANSLATE]\n[1] Hello there." in prompt
+    assert "How are you?" not in prompt and "Fine, thanks." not in prompt
+    assert "หวัดดี" in prompt
+
+
+def test_a_bible_edit_re_translates_cached_lines(project, fake):
+    source = copy(project, "sample.en.srt")
+    write_bible(project, "Somsak is the father.\n")
+
+    fake.queue(REPLIES)
+    run(project, fake, source)
+    assert run(project, fake, source) == 0  # cached
+    assert fake.call_count == 1
+
+    write_bible(project, "Somsak is the mother.\n")
+    fake.queue(REPLIES)
+    status = run(project, fake, source)
+
+    assert status == 0
+    assert fake.call_count == 2
+    assert "Somsak is the mother." in fake.calls[-1][1]["content"]
+
+
+def test_dry_run_counts_the_glossary(project, fake, capsys):
+    source = copy(project, "sample.en.srt")
+    run(project, fake, source, "--dry-run")
+    without = _prompt_tokens(capsys.readouterr().out)
+
+    write_glossary(project, glossary.Term("Hello", "translate", "สวัสดี"))
+    run(project, fake, source, "--dry-run")
+    with_terms = _prompt_tokens(capsys.readouterr().out)
+
+    assert with_terms > without
     assert fake.call_count == 0

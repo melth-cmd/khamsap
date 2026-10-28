@@ -203,9 +203,11 @@ warning, and wire_format "json" is rejected until it is implemented.
                                action = "translate"
                                th = "พ่อมด"
   Movie (2026).cache.json    per-entry translation cache
-                             (saved after every batch; invalidated by a change of model,
-                              prompt version or that entry's source text; failed entries
-                              are never cached, so a rerun re-requests only them)
+                             (saved after every batch; an entry is invalidated by a change
+                              of model, prompt version or its own source text, by editing
+                              a glossary term that appears in it, or by any change to the
+                              bible; failed entries are never cached, so a rerun re-requests
+                              only them)
   Movie (2026).report.txt    verification flags (entry number, original, translation, reason)
 
 Output naming: the ".en." tag becomes ".th." wherever it stands in the name, and ".th"
@@ -277,7 +279,16 @@ applies to the very next run with no rebuild step. A missing file is a normal st
 one-line hint suggests --bible-only); an unreadable bible or a broken glossary stops the
 run before any API call, naming the file and term, rather than translating with notes the
 translator cannot trust. --bible-only does not read the files it is about to replace, so
---force can repair a broken one. The --dry-run estimate counts the bible once per batch.
+--force can repair a broken one. The --dry-run estimate counts the bible once per batch
+and the glossary terms each batch would send.
+
+Which glossary entries a batch gets: those whose English word appears in that batch's own
+entries, matched as whole words and case-insensitively ("Gandalf's" matches "Gandalf";
+"Mai" does not match "Maid"). A word that only appears in the surrounding context lines
+does not pull its term in, because context is there to explain the batch. Terms are
+rendered compactly, e.g. "Gandalf = transliterate: แกนดัล์ฟ"; a batch that uses no term
+gets no glossary section at all. A file with neither a bible nor a glossary therefore
+translates exactly as it did before either existed.
 
 
 ### VERIFICATION PASS (after translation, report only)

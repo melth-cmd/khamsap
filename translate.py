@@ -232,6 +232,7 @@ def translate_one(
         limit=limit,
         range_=range_,
         bible=notes.bible if notes is not None else "",
+        terms=notes.terms if notes is not None else (),
     )
 
 
@@ -282,6 +283,7 @@ def _dry_run(
             limit=args.limit,
             range_=args.range_,
             bible=notes[source].bible if source in notes else "",
+            terms=notes[source].terms if source in notes else (),
             input_usd_per_mtok=settings.llm.input_usd_per_mtok,
             output_usd_per_mtok=settings.llm.output_usd_per_mtok,
         )
