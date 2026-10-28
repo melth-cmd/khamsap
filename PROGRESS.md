@@ -151,13 +151,13 @@ Phase 2: Reliability polish
       is a single-user tool, so there is no herd to spread); no separate connect timeout.
       tests: 14 in test_llm.py, 8 in test_runner.py (311 total).
  13. [x] Multi-line subtitles, speaker dashes, sound-effect brackets edge cases
-      Survey first, on the PEN15 sample (179 entries, 76 multi-line after prepare):
-      47 all-dash, 48 with any dash, 0 blank-line entries, 0 dropped.
+      Survey first, on a real episode-length HI-tagged file (179 entries, 76 multi-line
+      after prepare): 47 all-dash, 48 with any dash, 0 blank-line entries, 0 dropped.
       -> layout.py: DASHES = "-" + en dash + em dash, so turns in any dash style are found,
          and a dash hidden behind a leading placeholder or HTML tag counts ({0}-Hello.,
          <i>-Hello.</i>). layout runs AFTER tags.restore, so that second form is the common one.
          The dash rule now fires when ANY source line is dashed (was: all), which fixes the
-         "But short? / -Yeah..." shape in the sample; 2 such entries exist.
+         "But short? / -Yeah..." shape; 2 such entries were in the surveyed file.
          _restore_dashes(): when EVERY source line is dashed and the model dropped one, put it
          back in that source line's style (spaced or tight), after any leading tag. Reported
          as Layout.dashes_restored -> EntryResult.dashes_restored -> TranslatedFile.restored_dashes.
@@ -200,11 +200,10 @@ Phase 3: Story bible and glossary
 Phase 4: Verification
  18. Leftover English, glossary consistency, tag mismatch (reading speed DROPPED: not a
      priority, may add later - do not build it)
-     Also report, from the PEN15 test run:
-     - line count changed: a 2-line entry back as 1 line. 76 entries in that file are
-       multi-line, so this is not hypothetical; the model joined one in a live run.
-     - speaker dashes lost: 48 entries have "- " lines; losing the dash blurs who speaks.
-     Reference numbers from that file: 179 entries, 76 multi-line, 46 with dashes.
+     Also report:
+     - line count changed: a 2-line entry back as 1 line (not hypothetical: a model
+       merged one in an early live run, on a file where a third of entries are multi-line).
+     - speaker dashes lost: losing "- " on a turn blurs who speaks.
  19. report.txt only, no auto-fix
 
 Phase 5: Extras
@@ -233,12 +232,13 @@ Phase 5: Extras
   Automated: 349 unit tests pass (pytest -q, live excluded). All modules compile.
   Live (real OpenRouter, key from .env, never printed):
     - pytest -m live: 1 passed (3 entries, all Thai).
-    - PEN15 --range 88-95 (8 entries, 6 of them two-line speaker turns): 0 failures,
-      line counts 8/8 correct, dashes present on every dashed entry, Thai natural.
-      The raw cached replies already had the right line count, so layout had nothing
-      to repair that time; the repair paths are covered by unit tests.
-    - PEN15 --range 12-15: the only three-line entry (with <i> on every line) came
-      back as three lines with tags restored per line.
+    - A real episode, entries 88-95 (8 entries, 6 of them two-line speaker turns):
+      0 failures, line counts 8/8 correct, dashes present on every dashed entry, Thai
+      natural. The raw cached replies already had the right line count, so layout had
+      nothing to repair that time; the repair paths are covered by unit tests.
+    - The same episode, entries 12-15: the only three-line entry (with <i> on every
+      line) came back as three lines with tags restored per line.
+    (That test file has since been discarded; the repo fixtures cover the same shapes.)
     - Rerun of the same slice: 0 tokens, byte-identical output (cache v2 keys work).
     - Two-file run: progress headers, per-file lines, "total: 2 files 2 translated
       6 entries 1,161 tokens", exit 0. Cache sidecar written next to the source.
@@ -290,9 +290,8 @@ Open threads carried into Phase 2
   - report.txt is not written yet (item 19). Failures and rewraps live in
     EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
   - verify.py, bible.py and glossary.py are still empty.
-  - Test material from this phase lived in /tmp/opencode (PEN15 sample, edge-case files);
-    /tmp may be cleared, so copy anything worth keeping. The repo now has its own
-    tests/fixtures/edge_cases.srt, so no external file is needed for the suite.
+  - The external test file used in Phase 2 has been discarded. The suite is self-contained:
+    tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Phase 3 (item 15) needs decisions before code: how to chunk a long file for the pre-pass,
     what the bible must contain, which language it is written in, glossary "action" values,
     whether --bible-only pauses or just stops, and how bible/glossary changes invalidate
