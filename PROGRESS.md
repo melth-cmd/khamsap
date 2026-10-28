@@ -82,7 +82,18 @@ Phase 1: Core translator, command line
       Output naming honours [output] strip_en_suffix. Failed entries reported but exit 0.
       tests/test_config.py 31 + tests/test_translate.py 10 passing (211 total).
       Live CLI run OK: no key -> exit 2 with hint; with key -> demo.th.srt written, 721 tokens.
- 8. JSON cache saved after each batch (resume on rerun)
+ 8. [x] JSON cache saved after each batch (resume on rerun)
+      -> cache.py: Cache(path, model, prompt_version) with load / get / put / save / contains.
+      File sits beside the source (movie.en.srt -> movie.cache.json) via srtio.sidecar_path.
+      Stores {version, model, prompt_version, entries: {index: {source, text}}}; source is the
+      protected text, text is the finished Thai with tags restored.
+      Validity: model, prompt version and that entry's source must match, else the entry (or the
+      whole file) is ignored. Corrupt/short files warn and start empty.
+      Saved atomically after every batch; no-op saves do not touch the file.
+      Pipeline seeds context-before from cached Thai, and only uncached entries are batched.
+      Failed entries are never cached. use_cache=False bypasses it entirely.
+      tests/test_cache.py 14 + 7 pipeline tests passing (231 total).
+      Live: first CLI run 418 tokens, second run 0 tokens and identical output.
  9. Context lines (previous English+Thai, next English)
  10. --limit/--range and --dry-run
  Test on a tiny sample first.

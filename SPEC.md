@@ -167,6 +167,9 @@ warning, and wire_format "json" is rejected until it is implemented.
                                en = "NASA"
                                action = "keep"
   Movie (2026).cache.json    per-entry translation cache
+                             (saved after every batch; invalidated by a change of model,
+                              prompt version or that entry's source text; failed entries
+                              are never cached, so a rerun re-requests only them)
   Movie (2026).report.txt    verification flags (entry number, original, translation, reason)
 
 Output naming: strip ".en" rather than appending ".th" blindly.

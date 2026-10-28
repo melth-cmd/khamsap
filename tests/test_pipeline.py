@@ -188,3 +188,116 @@ def test_failure_list_is_exposed_for_the_report():
     result = run(client, [subtitle(1, "One."), subtitle(2, "Two.")], max_retries=1)
     assert [f.index for f in result.failures] == [2]
     assert result.failures[0].reason in {"foreign_script", "missing_thai"}
+
+
+# --- cache / resume ---------------------------------------------------------
+
+
+REPLIES = "[1] สวัสดี\n[2] สบายดีไหม\n[3] {0}สบายดี{1}"
+
+
+def copied_fixture(tmp_path, name="movie.en.srt") -> Path:
+    target = tmp_path / name
+    target.write_bytes((FIXTURES / "simple.srt").read_bytes())
+    return target
+
+
+def test_cache_file_is_written_next_to_the_source(tmp_path):
+    from conftest import FakeClient
+
+    source = copied_fixture(tmp_path)
+    pipeline.translate_file(FakeClient([REPLIES]), source, sleep=lambda s: None)
+    assert (tmp_path / "movie.cache.json").exists()
+    assert (tmp_path / "movie.th.srt").exists()
+
+
+def test_second_run_makes_no_calls(tmp_path):
+    from conftest import FakeClient
+
+    source = copied_fixture(tmp_path)
+    first = FakeClient([REPLIES])
+    pipeline.translate_file(first, source, sleep=lambda s: None)
+    assert first.call_count == 1
+
+    second = FakeClient()  # would explode if anything were requested
+    result, _ = pipeline.translate_file(second, source, sleep=lambda s: None)
+    assert second.call_count == 0
+    assert [s.content for s in result.subtitles] == [
+        "สวัสดี",
+        "สบายดีไหม",
+        "<i>สบายดี</i>",
+    ]
+    assert all(entry.from_cache for entry in result.results)
+
+
+def test_cache_can_be_disabled(tmp_path):
+    from conftest import FakeClient
+
+    source = copied_fixture(tmp_path)
+    pipeline.translate_file(FakeClient([REPLIES]), source, use_cache=False, sleep=lambda s: None)
+    assert not (tmp_path / "movie.cache.json").exists()
+
+
+def test_only_uncached_entries_are_requested(tmp_path):
+    from conftest import FakeClient
+    import cache as cache_module
+
+    source = copied_fixture(tmp_path)
+    store = cache_module.Cache(tmp_path / "movie.cache.json", model="m/x")
+    store.put(1, "Hello there.", "สวัสดี")
+    store.put(2, "How are you?", "สบายดีไหม")
+    store.save()
+
+    client = FakeClient(["[3] {0}สบายดี{1}"])
+    result, _ = pipeline.translate_file(client, source, model="m/x", sleep=lambda s: None)
+
+    assert client.call_count == 1
+    prompt = client.calls[0][1]["content"]
+    assert "[TRANSLATE]\n[3] {0}Fine, thanks.{1}" in prompt
+    assert "[1] Hello there." not in prompt.split("[TRANSLATE]")[1]
+    assert result.failures == []
+
+
+def test_cached_thai_is_used_as_context(tmp_path):
+    from conftest import FakeClient
+    import cache as cache_module
+
+    source = copied_fixture(tmp_path)
+    store = cache_module.Cache(tmp_path / "movie.cache.json", model="m/x")
+    store.put(1, "Hello there.", "สวัสดี")
+    store.save()
+
+    client = FakeClient(["[2] สบายดีไหม\n[3] {0}สบายดี{1}"])
+    pipeline.translate_file(client, source, model="m/x", sleep=lambda s: None, size=5)
+    prompt = client.calls[0][1]["content"]
+    assert "TH: สวัสดี" in prompt
+
+
+def test_failed_entries_are_not_cached(tmp_path):
+    from conftest import FakeClient
+    import cache as cache_module
+
+    source = copied_fixture(tmp_path)
+    client = FakeClient(["[1] สวัสดี\n[2] 你好\n[3] {0}สบายดี{1}"])
+    client.queue("[2] 你好", "[2] 你好", "[2] 你好")
+    pipeline.translate_file(client, source, model="m/x", sleep=lambda s: None)
+
+    store = cache_module.Cache(tmp_path / "movie.cache.json", model="m/x").load()
+    assert 1 in store and 3 in store
+    assert 2 not in store
+
+
+def test_changed_source_line_is_retranslated(tmp_path):
+    from conftest import FakeClient
+
+    source = copied_fixture(tmp_path)
+    pipeline.translate_file(FakeClient([REPLIES]), source, sleep=lambda s: None)
+
+    edited = source.read_text(encoding="utf-8").replace("How are you?", "Where were you?")
+    source.write_text(edited, encoding="utf-8")
+
+    client = FakeClient(["[2] ไปไหนมา"])
+    result, _ = pipeline.translate_file(client, source, sleep=lambda s: None)
+    assert client.call_count == 1
+    assert result.translated[2] == "ไปไหนมา"
+    assert result.translated[1] == "สวัสดี"

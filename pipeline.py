@@ -24,6 +24,7 @@ from typing import Mapping, Sequence
 import srt
 
 import batcher
+import cache as cache_module
 import hi
 import llm
 import runner
@@ -110,9 +111,14 @@ def translate_subtitles(
     context_after: int = 2,
     bible: str = "",
     glossary: str = "",
+    cache: cache_module.Cache | None = None,
     **runner_kwargs,
 ) -> TranslatedFile:
-    """Translate a whole file, batch by batch, keeping timestamps intact."""
+    """Translate a whole file, batch by batch, keeping timestamps intact.
+
+    With a cache, entries already translated are not sent again; they still
+    count as context, so resumed batches see the same Thai they would have.
+    """
     prepared = prepare(subtitles, strip_hi=strip_hi)
     result = TranslatedFile(dropped=list(prepared.dropped))
 
@@ -121,12 +127,34 @@ def translate_subtitles(
         return result
 
     translated: dict[int, str] = {}
-    batch_count = -(-len(prepared.entries) // size)
+    pending: list[SourceEntry] = []
+
+    for entry in prepared.entries:
+        hit = cache.get(entry.index, entry.text) if cache is not None else None
+        if hit is None:
+            pending.append(entry)
+            continue
+        translated[entry.index] = hit
+        result.results.append(
+            EntryResult(index=entry.index, text=hit, ok=True, from_cache=True)
+        )
+
+    if cache is not None:
+        log.info(
+            "%d entr%s already cached, %d to translate",
+            len(prepared.entries) - len(pending),
+            "y" if len(prepared.entries) - len(pending) == 1 else "ies",
+            len(pending),
+        )
+
+    source_text = {entry.index: entry.text for entry in prepared.entries}
+    batch_count = -(-len(pending) // size)
 
     for number in range(1, batch_count + 1):
         # Rebuilt each round so context-before picks up Thai produced so far.
         batch = batcher.make_batches(
             prepared.entries,
+            selection=pending,
             size=size,
             context_before=context_before,
             context_after=context_after,
@@ -149,16 +177,25 @@ def translate_subtitles(
                 prepared.protected[entry_result.index],
                 strict=False,
             )
-            restored_result = EntryResult(
-                index=entry_result.index,
-                text=restored,
-                ok=entry_result.ok,
-                reason=entry_result.reason,
-                attempts=entry_result.attempts,
+            result.results.append(
+                EntryResult(
+                    index=entry_result.index,
+                    text=restored,
+                    ok=entry_result.ok,
+                    reason=entry_result.reason,
+                    attempts=entry_result.attempts,
+                )
             )
-            result.results.append(restored_result)
-            if restored_result.ok:
+            if entry_result.ok:
                 translated[entry_result.index] = restored
+                if cache is not None:
+                    cache.put(
+                        entry_result.index, source_text[entry_result.index], restored
+                    )
+
+        # Saved per batch: an interrupted run loses at most this batch.
+        if cache is not None:
+            cache.save()
 
     result.results.sort(key=lambda entry: entry.index)
     result.subtitles = _rebuild(subtitles, result, prepared)
@@ -198,6 +235,8 @@ def translate_file(
     output: str | Path | None = None,
     encoding: str = "utf-8",
     strip_hi: bool = False,
+    use_cache: bool = True,
+    model: str = "",
     **kwargs,
 ) -> tuple[TranslatedFile, Path]:
     """Read, translate and write one file. Returns (result, output path)."""
@@ -206,7 +245,15 @@ def translate_file(
     if loaded.skipped:
         log.warning("%s: %d malformed block(s) were skipped", source.name, loaded.skipped)
 
-    result = translate_subtitles(client, loaded.subtitles, strip_hi=strip_hi, **kwargs)
+    cache = None
+    if use_cache:
+        cache = cache_module.Cache(
+            srtio.sidecar_path(source, ".cache.json"), model=model
+        ).load()
+
+    result = translate_subtitles(
+        client, loaded.subtitles, strip_hi=strip_hi, cache=cache, **kwargs
+    )
     target = Path(output) if output is not None else srtio.output_path_for(source)
     srtio.write_srt(target, result.subtitles, encoding=encoding)
     return result, target

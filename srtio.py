@@ -146,6 +146,21 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
+def sidecar_path(
+    source: str | Path, suffix: str, strip_en_suffix: bool = True
+) -> Path:
+    """A file next to `source` sharing its stem: .th.srt, .cache.json, .bible.md.
+
+    The ".en" is stripped rather than appended after, so
+    Movie (2026).en.srt gives Movie (2026).cache.json, not Movie (2026).en.cache.json.
+    """
+    source = Path(source)
+    stem = source.stem if source.suffix else source.name
+    if strip_en_suffix and stem.lower().endswith(".en"):
+        stem = stem[:-3]
+    return source.with_name(stem + suffix)
+
+
 def output_path_for(
     source: str | Path, suffix: str = ".th.srt", strip_en_suffix: bool = True
 ) -> Path:
@@ -155,11 +170,7 @@ def output_path_for(
     Movie (2026).srt    -> Movie (2026).th.srt
     With strip_en_suffix off: Movie.en.srt -> Movie.en.th.srt
     """
-    source = Path(source)
-    stem = source.stem if source.suffix else source.name
-    if strip_en_suffix and stem.lower().endswith(".en"):
-        stem = stem[:-3]
-    return source.with_name(stem + suffix)
+    return sidecar_path(source, suffix, strip_en_suffix=strip_en_suffix)
 
 
 def write_srt(

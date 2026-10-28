@@ -56,6 +56,7 @@ def translate_one(
         target,
         encoding=settings.output.encoding,
         strip_hi=settings.cleanup.strip_hi,
+        model=settings.llm.model,
         size=settings.batch.size,
         context_before=settings.batch.context_before,
         context_after=settings.batch.context_after,

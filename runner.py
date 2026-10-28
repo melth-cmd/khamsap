@@ -35,6 +35,7 @@ class EntryResult:
     ok: bool = True
     reason: str | None = None
     attempts: int = 0
+    from_cache: bool = False
 
 
 @dataclass
