@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
 import config
+import glossary
 import srtio
 import translate
 from conftest import FakeClient
@@ -422,3 +424,148 @@ def test_dry_run_needs_no_key_and_builds_no_client(project, monkeypatch, capsys)
     assert status == 0
     assert "3 entries in 1 batch" in out  # default size 60 fits the whole file
     assert "tokens" in out and "$" in out
+
+
+# --- story bible pre-pass (step 15) -----------------------------------------
+
+BIBLE_REPLY = json.dumps(
+    {
+        "summary": "Somsak runs a garage; Mai comes home from school.",
+        "notes": "Bangkok, present day.",
+        "characters": [
+            {
+                "name": "Somsak",
+                "gender": "male",
+                "age": "40s",
+                "role": "owns a garage",
+                "relationships": "Mai's father",
+                "register": "ผม + ครับ with customers",
+            }
+        ],
+        "terms": [{"en": "Bangkok", "action": "transliterate", "th": "กรุงเทพ"}],
+    },
+    ensure_ascii=False,
+)
+
+
+def test_bible_only_writes_both_files_and_stops(project, fake, capsys):
+    fake.queue(BIBLE_REPLY)
+    status = run(project, fake, copy(project, "sample.en.srt"), "--bible-only")
+    captured = capsys.readouterr()
+
+    assert status == 0
+    assert fake.call_count == 1
+    assert not (project / "sample.th.srt").exists()
+    assert "Somsak" in (project / "sample.bible.md").read_text(encoding="utf-8")
+    assert glossary.load(project / "sample.glossary.toml") == [
+        glossary.Term("Bangkok", "transliterate", "กรุงเทพ")
+    ]
+    assert "sample.en.srt -> sample.bible.md, sample.glossary.toml" in captured.out
+    assert "1 character  1 term" in captured.out
+    assert "then translate without --bible-only" in captured.err
+
+
+def test_bible_only_refuses_to_overwrite_hand_edits(project, fake, capsys):
+    path = project / "sample.bible.md"
+    path.write_text("my own notes", encoding="utf-8")
+    status = run(project, fake, copy(project, "sample.en.srt"), "--bible-only")
+    err = capsys.readouterr().err
+
+    assert status == 2
+    assert "already exists" in err and "--force" in err
+    assert fake.call_count == 0
+    assert path.read_text(encoding="utf-8") == "my own notes"
+    assert not (project / "sample.glossary.toml").exists()
+
+
+def test_force_rebuilds_the_bible(project, fake):
+    (project / "sample.glossary.toml").write_text("# old", encoding="utf-8")
+    fake.queue(BIBLE_REPLY)
+    status = run(project, fake, copy(project, "sample.en.srt"), "--bible-only", "--force")
+
+    assert status == 0
+    assert (project / "sample.bible.md").exists()
+    assert glossary.load(project / "sample.glossary.toml")
+
+
+def test_bible_only_reports_every_existing_file_before_any_call(project, fake, capsys):
+    (project / "a.bible.md").write_text("mine", encoding="utf-8")
+    (project / "b.glossary.toml").write_text("# mine", encoding="utf-8")
+    status = run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"), "--bible-only")
+    err = capsys.readouterr().err
+
+    assert status == 2
+    assert "a.bible.md already exists" in err
+    assert "b.glossary.toml already exists" in err
+    assert fake.call_count == 0
+
+
+def test_bible_only_reads_only_the_selected_range(project, fake):
+    fake.queue(BIBLE_REPLY)
+    status = run(
+        project, fake, copy(project, "sample.en.srt"), "--bible-only", "--range", "1-1"
+    )
+
+    assert status == 0
+    script = fake.calls[0][1]["content"]
+    assert "Hello there." in script
+    assert "How are you?" not in script
+
+
+def test_bible_only_with_several_files(project, fake, capsys):
+    fake.queue(BIBLE_REPLY).queue(BIBLE_REPLY)
+    status = run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"), "--bible-only")
+    captured = capsys.readouterr()
+
+    assert status == 0
+    assert "[1/2] a.en.srt" in captured.err and "[2/2] b.en.srt" in captured.err
+    for name in ("a", "b"):
+        assert (project / f"{name}.bible.md").exists()
+        assert (project / f"{name}.glossary.toml").exists()
+
+
+def test_a_failed_pre_pass_writes_nothing(project, fake, capsys):
+    fake.queue("I would rather not.").queue("Still prose.")
+    status = run(project, fake, copy(project, "sample.en.srt"), "--bible-only")
+    err = capsys.readouterr().err
+
+    assert status == 1
+    assert "error: sample.en.srt" in err
+    assert not (project / "sample.bible.md").exists()
+    assert not (project / "sample.glossary.toml").exists()
+
+
+def test_bible_only_rejects_output_flag(project, fake, capsys):
+    status = translate.main(
+        [
+            str(copy(project, "sample.en.srt")),
+            "--bible-only",
+            "--output",
+            str(project / "x.srt"),
+            "--config",
+            str(project / "config.toml"),
+        ]
+    )
+    assert status == 2
+    assert "--output" in capsys.readouterr().err
+    assert fake.call_count == 0
+
+
+def test_a_normal_run_does_not_build_a_bible(project, fake):
+    fake.queue(REPLIES)
+    status = run(project, fake, copy(project, "sample.en.srt"))
+
+    assert status == 0
+    assert fake.call_count == 1  # translation only, no pre-pass
+    assert not (project / "sample.bible.md").exists()
+    assert not (project / "sample.glossary.toml").exists()
+
+
+def test_check_bible_targets_ignores_missing_inputs(project):
+    assert translate.check_bible_targets([str(project / "ghost.srt")]) == []
+
+
+def test_bible_paths_sit_beside_the_source(project):
+    bible_path, glossary_path = translate.bible_paths(project / "Show.en.hi_partial.srt")
+    assert bible_path.name == "Show.hi_partial.bible.md"
+    assert glossary_path.name == "Show.hi_partial.glossary.toml"

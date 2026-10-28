@@ -79,7 +79,10 @@ Core ideas:
 
 8. Smart cache keys.
    Key per entry = hash(source text + model + prompt version + glossary entries that
-   apply to that entry). Editing the glossary only invalidates the affected lines.
+   apply to that entry + a digest of the story bible). Editing the glossary only
+   invalidates the affected lines. Editing the bible re-translates the file, because
+   every line's pronouns and particles can depend on it and one file must not mix
+   two registers; that is deliberate, not an accident.
 
 9. GUI dropped (optional, probably never).
     The pain points were translation quality and the paste loop; a CLI fixes both.
@@ -181,7 +184,9 @@ warning, and wire_format "json" is rejected until it is implemented.
   Movie (2026).th.srt        final translation
   Movie (2026).bible.md      story summary, characters (gender/age/relationships),
                              default register per relationship. Editable.
-  Movie (2026).glossary.toml terms table. Editable. Example:
+  Movie (2026).glossary.toml terms table. Editable. action is one of keep,
+                             transliterate or translate; th holds the Thai
+                             spelling for the last two. Example:
                                [[term]]
                                en = "Gandalf"
                                action = "transliterate"
@@ -189,6 +194,10 @@ warning, and wire_format "json" is rejected until it is implemented.
                                [[term]]
                                en = "NASA"
                                action = "keep"
+                               [[term]]
+                               en = "wizard"
+                               action = "translate"
+                               th = "พ่อมด"
   Movie (2026).cache.json    per-entry translation cache
                              (saved after every batch; invalidated by a change of model,
                               prompt version or that entry's source text; failed entries
@@ -233,15 +242,31 @@ between models; this is the cheapest quality improvement available.
 
 ### PRE-PASS (story bible + glossary)
 
-Input: whole English subtitle text (chunked if too large) + title/year from filename.
+Run only when asked: `--bible-only` reads the file and stops. A normal translation run
+never builds the files, it only uses them if they already exist.
+
+Input: the same cleaned English text translation would see (HI already stripped per
+config, formatting tags removed), plus the title and year guessed from the filename.
+The guess is only a hint, never written into the files.
+
+Chunking: parts of about 12,000 characters, cut between entries only. One part is used
+as it comes back. Several parts are read separately (characters/terms per part) and a
+single merge call folds them into one bible, so a character who first appears halfway
+through still gets a consistent register.
+
 Ask the LLM to produce:
-- 3-5 sentence plot/setting summary
-- Characters: name, gender, age range, relationships, suggested register toward others
-- Terms: character names, places, brands, technical terms, each with keep/transliterate
-  and a suggested Thai spelling
-Write to bible.md and glossary.toml. Pause (or offer --stop-after-bible) so I can edit
-them by hand before translating. Translation requests then include the bible (short form)
-and only the glossary entries relevant to each batch.
+- 3-5 sentence plot summary, plus setting/era/tone
+- Characters: name, gender, age range, relationships, and the Thai register in Thai
+  script (pronouns and particles), e.g. "ผม + ครับ with strangers, หนู + ค่ะ with her
+  father". Everything else is written in English, so the file is easy to check by hand.
+  Unnamed speakers ("first speaker", "he") are never characters.
+- Terms: character names, places, brands, titles, ranks, technical words, each with
+  action = "keep" (English), "transliterate" (Thai spelling in th) or "translate"
+  (Thai meaning in th)
+
+Write to bible.md and glossary.toml, refusing to overwrite existing files without
+--force, so hand edits survive. Then translate: every request carries the whole bible
+(it is short by design) and only the glossary entries relevant to that batch.
 
 
 ### VERIFICATION PASS (after translation, report only)
@@ -285,7 +310,10 @@ proposes corrections (written to the report, applied only with --fix).
                                               previous full translation.
   --dry-run                                   show batch count and estimated tokens/cost, no API calls
                                               and no API key needed
-  --bible-only                                build bible + glossary, then stop
+  --bible-only                                build bible + glossary, then stop.
+                                              Refuses to overwrite existing files
+                                              without --force (hand edits).
+                                              --limit/--range restrict what it reads.
   --strip-hi                                  drop [sound effects]/(descriptions) from output
   --fix, --review                             see Verification
   --bilingual                                 English above Thai

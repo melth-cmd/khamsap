@@ -2,6 +2,7 @@
 
     python translate.py input.en.srt
     python translate.py *.en.srt --config my.toml
+    python translate.py input.en.srt --bible-only
 
 The API key comes from the environment variable named in [llm] key_env. It is
 read only when the client is built, and never printed.
@@ -15,6 +16,7 @@ import sys
 from pathlib import Path
 
 import batcher
+import bible
 import config as config_module
 import llm
 import pipeline
@@ -47,8 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show batches, tokens and estimated cost without calling the API",
     )
     parser.add_argument(
+        "--bible-only", action="store_true",
+        help="Read the script once and write FILE.bible.md + FILE.glossary.toml, "
+        "then stop (no translation)",
+    )
+    parser.add_argument(
         "--force", action="store_true",
-        help="Also accept inputs that look like existing translations (*.th.srt)",
+        help="Also accept inputs that look like existing translations (*.th.srt), "
+        "and rebuild bible/glossary files that already exist",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show per-batch progress"
@@ -63,6 +71,37 @@ def planned_output(
     return output or srtio.output_path_for(
         source, strip_en_suffix=settings.output.strip_en_suffix
     )
+
+
+def bible_paths(source: Path) -> tuple[Path, Path]:
+    """Where the pre-pass writes its two hand-editable files."""
+    return (
+        srtio.sidecar_path(source, ".bible.md"),
+        srtio.sidecar_path(source, ".glossary.toml"),
+    )
+
+
+def check_bible_targets(files: list[str], force: bool = False) -> list[str]:
+    """Files the pre-pass would overwrite, checked before any call is made.
+
+    Both files are hand-editable, so rebuilding is never implicit: it takes
+    --force, and every affected file is reported before the first call.
+    """
+    if force:
+        return []
+
+    problems: list[str] = []
+    for name in files:
+        source = Path(name)
+        if not source.is_file():
+            continue  # check_inputs already reported it
+        existing = [path for path in bible_paths(source) if path.exists()]
+        if existing:
+            problems.append(
+                f"{existing[0]} already exists; use --force to rebuild the bible "
+                "and glossary (hand edits will be lost)"
+            )
+    return problems
 
 
 def looks_translated(path: Path) -> bool:
@@ -196,6 +235,59 @@ def _dry_run(args, settings: config_module.Settings) -> int:
     return status
 
 
+def _bible_summary(
+    source: Path, result: bible.BibleResult, bible_path: Path, glossary_path: Path
+) -> str:
+    characters = len(result.bible.characters)
+    terms = len(result.bible.terms)
+    parts = [
+        f"{source.name} -> {bible_path.name}, {glossary_path.name}",
+        f"{characters} {'character' if characters == 1 else 'characters'}",
+        f"{terms} {'term' if terms == 1 else 'terms'}",
+        f"{result.total_tokens:,} tokens",
+    ]
+    return "  ".join(parts)
+
+
+def _bible_only(
+    args,
+    sources: list[Path],
+    settings: config_module.Settings,
+    client: llm.ChatClient,
+) -> int:
+    """Read each script once and write its bible and glossary, then stop."""
+    status = 0
+    for number, source in enumerate(sources, 1):
+        if len(sources) > 1:
+            print(f"[{number}/{len(sources)}] {source.name}", file=sys.stderr)
+
+        bible_path, glossary_path = bible_paths(source)
+        try:
+            loaded = srtio.load_srt(source)
+            prepared = pipeline.prepare(
+                loaded.subtitles, strip_hi=settings.cleanup.strip_hi
+            )
+            selected = batcher.select_range(
+                prepared.entries, limit=args.limit, range_=args.range_
+            )
+            title, year = bible.title_from_filename(source)
+            result = bible.build(client, selected, title=title, year=year)
+            bible.write(result.bible, bible_path, glossary_path)
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
+            print(f"error: {source.name}: {exc}", file=sys.stderr)
+            status = 1
+            continue
+
+        print(_bible_summary(source, result, bible_path, glossary_path))
+
+    if status == 0:
+        print(
+            "Edit the files by hand if needed, then translate without --bible-only.",
+            file=sys.stderr,
+        )
+    return status
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -205,6 +297,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output and len(args.files) > 1:
         print("error: --output can only be used with a single input file", file=sys.stderr)
+        return 2
+    if args.output and args.bible_only:
+        print(
+            "error: --output is for translated subtitles; --bible-only writes "
+            "FILE.bible.md and FILE.glossary.toml next to the input",
+            file=sys.stderr,
+        )
         return 2
 
     if args.limit is not None and args.limit < 0:
@@ -225,6 +324,8 @@ def main(argv: list[str] | None = None) -> int:
 
     output = Path(args.output) if args.output else None
     problems = check_inputs(args.files, settings, output, force=args.force)
+    if args.bible_only:
+        problems += check_bible_targets(args.files, force=args.force)
     if problems:
         for problem in problems:
             print(f"error: {problem}", file=sys.stderr)
@@ -246,6 +347,9 @@ def main(argv: list[str] | None = None) -> int:
     except (config_module.ConfigError, llm.AuthError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    if args.bible_only:
+        return _bible_only(args, sources, settings, client)
 
     status = 0
     failed_files = 0

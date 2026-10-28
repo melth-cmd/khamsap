@@ -193,7 +193,42 @@ Phase 2: Reliability polish
       tests/test_translate.py: 15 new (348 total).
 
 Phase 3: Story bible and glossary
- 15. Pre-pass producing bible.md and glossary.toml
+ 15. [x] Pre-pass producing bible.md and glossary.toml
+      Decisions agreed before code: read the whole file in parts and merge; English
+      prose with Thai suggestions in Thai script; actions keep / transliterate /
+      translate; run ONLY with --bible-only, never overwrite without --force; a bible
+      digest goes into every cache key (wired in item 17, the hook already exists).
+      -> glossary.py: Term (action validated; trimmed; keep drops th), render / parse /
+         load / unique. Writing escapes with JSON rules (valid TOML) and leaves Thai
+         literal. Reading is strict: bad TOML, unknown action, spelled action without
+         th, wrong field type and a repeated word (case-insensitive) all raise
+         GlossaryError naming the term; unknown fields warn. Missing file -> [].
+         Unique() is only for model output; hand edits get the error instead.
+      -> bible.py: title_from_filename (drops .en. and release junk, splits the year),
+         chunk_entries (<= CHUNK_CHARS 12000, never mid-entry, oversized entry alone),
+         parse_json (fences and prose tolerated), notes + merge prompts,
+         character/term normalisation, build (one part used as-is, several parts plus
+         one merge call), write (glossary then bible, atomically, UTF-8).
+         Model output is repaired, never trusted: unknown action -> transliterate when
+         a Thai form exists else keep; spelled action without th -> keep; nameless
+         entries skipped; duplicate people/terms keep the first; title/year always come
+         from the filename (the model's are ignored). Placeholder speakers ("He",
+         "First speaker (unnamed)", "the man on the phone") are forbidden in both
+         prompts AND dropped in code, because a real multi-part run produced them.
+      -> translate.py: --bible-only; check_bible_targets joins the other pre-flight
+         checks (every existing bible/glossary reported at once, exit 2, no call);
+         --force rebuilds them (hand edits lost, by request); --output rejected;
+         --limit/--range restrict what is read. A normal run never builds a bible.
+      Pre-pass temperature 0.2; a non-JSON reply is re-asked once at 0.1 with the bad
+      reply attached, then BibleError exits 1. Transport/auth errors bubble to the CLI.
+      tests: 96 new (23 glossary, 62 bible, 11 CLI/pre-flight) = 445 passing.
+      Live single part: 14-line Thai family scene, 1 call, 5,954 tokens -> sensible
+      bible (Mai / Somsak / Somchai with Thai registers) and 9 usable terms.
+      Live multi part: 3 calls, 9,684 tokens after the fix; before it the merge invented
+      "First speaker (unnamed)" and "He", which is what the guard now prevents.
+      Known: a single-part glossary is not filtered for rare words (the merge call does
+      that for multi-part files); a transport error loses the parts already read.
+      A rerun without --force refuses and makes no call.
  16. Hand-editable files; reload on each run
  17. Inject bible (short form) and per-batch glossary entries into every request
 
@@ -252,7 +287,9 @@ Phase 5: Extras
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
-post-phase line-break work). Phase 2 is complete (items 11-14). Next is Phase 3, item 15: story bible + glossary pre-pass.
+post-phase line-break work). Phase 2 is complete (items 11-14). Item 15 (story bible +
+glossary pre-pass) is complete. Next is item 16: load the hand-editable files and reload
+them on every run, then item 17: inject the bible and the per-batch glossary.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -272,15 +309,24 @@ Modules (one line each)
   llm        OpenRouter client, wire format, prompt, validate (IDs/Thai/script/tags)
   runner     one batch: retry only failures, backoff, English fallback
   cache      per-entry JSON cache, atomic saves
+  bible      pre-pass: chunk the script, prompt + merge the notes, write both files
+  glossary   glossary.toml terms: validate, render, parse, load, unique
   layout     rewrap translated text to the source line count (dash / proportional)
   pipeline   prepare -> batch -> translate -> restore -> rebuild -> write
   config     config.toml loading/validation, build_client
   translate  argparse CLI, multi-file pre-flight and run summary
 
-Open threads carried into Phase 2
-  - Item 11 done: the cache already takes a `glossary` callable. Phase 3 (item 15/17) only
-    has to build glossary.py and pass it in wherever Cache(...) is built (pipeline.translate_file
-    builds it today; translate_file has no pass-through parameter yet).
+Open threads carried forward
+  - Item 11 done: the cache takes a `glossary` callable. Item 17 must pass
+    "digest(applicable glossary terms) + digest(bible)" from that callable wherever
+    Cache(...) is built (pipeline.translate_file builds it today; translate_file has no
+    pass-through parameter yet). Decision: a bible edit re-translates the file.
+  - Item 16 needs: load bible.md/glossary.toml beside each source, reload on every run,
+    warn (never crash) on a bad glossary, and say whether a bible was used. A normal run
+    must NOT call the pre-pass (agreed): a hint when the files are missing is enough.
+  - Item 17 needs: bible in llm.build_messages (the parameter exists), per-batch glossary
+    selection by term occurrence, and the cache callable above. The --dry-run estimate
+    does not include bible/glossary overhead yet.
   - PROMPT_VERSION is still 1 and was deliberately NOT bumped for the line-break prompt rule:
     old entries are repaired on read by layout.py, so bumping would have thrown away every
     cache for a layout fix.
@@ -289,10 +335,12 @@ Open threads carried into Phase 2
     (rewrapped / dashes_restored) for the item 18 report.
   - report.txt is not written yet (item 19). Failures and rewraps live in
     EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
-  - verify.py, bible.py and glossary.py are still empty.
+  - verify.py is still empty; bible.py and glossary.py are written (item 15).
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
-  - Phase 3 (item 15) needs decisions before code: how to chunk a long file for the pre-pass,
-    what the bible must contain, which language it is written in, glossary "action" values,
-    whether --bible-only pauses or just stops, and how bible/glossary changes invalidate
-    the cache (the hook already exists: pass a glossary callable to Cache).
+  - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;
+    English prose with Thai forms in Thai script; actions keep/transliterate/translate;
+    --bible-only only (a normal run never builds the files); bible digest in the cache key.
+  - Item 15 does not touch config.toml: CHUNK_CHARS, the two temperatures and the re-ask
+    count are constants in bible.py. Promote them to a [bible] section only if the live
+    behaviour asks for it.
