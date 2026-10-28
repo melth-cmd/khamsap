@@ -71,7 +71,17 @@ Phase 1: Core translator, command line
       Live end-to-end run OK: <i> tags restored, multi-line entry translated, no failures.
       Known gap: the model may join a two-line entry into one line; line breaks are not
       preserved or checked yet. Candidate for the step 18 verification report.
- 7. API key from env var; model and settings in config.toml
+ 7. [x] API key from env var; model and settings in config.toml
+      -> config.py: LLMSettings/BatchSettings/OutputSettings/CleanupSettings/VerifySettings,
+         settings_from_dict / load_settings / build_client. translate.py: argparse CLI.
+      Every setting has a default, so a missing config beside the script only warns; an explicit
+      --config that is missing is fatal. Values are type/range checked on load (temperature 0-2,
+      size >= 1, known codec, wire_format "json" rejected until built). Unknown keys warn.
+      Key read from [llm] key_env at build_client time only; missing key exits 2 with a message.
+      CLI flags so far: FILE... , --config, --output (single file only), -v.
+      Output naming honours [output] strip_en_suffix. Failed entries reported but exit 0.
+      tests/test_config.py 31 + tests/test_translate.py 10 passing (211 total).
+      Live CLI run OK: no key -> exit 2 with hint; with key -> demo.th.srt written, 721 tokens.
  8. JSON cache saved after each batch (resume on rerun)
  9. Context lines (previous English+Thai, next English)
  10. --limit/--range and --dry-run

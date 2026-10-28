@@ -102,6 +102,7 @@ Core ideas:
 
   translate.py        CLI entry point (argparse)
   config.toml         model, temperature, batch size, limits, wire format, paths
+  config.py           load + validate config.toml, build the client from it
   srtio.py            read (utf-8-sig, then charset fallback), parse, write
   tags.py             strip/restore formatting tags and placeholders; tag-count check
   batcher.py          split into ~60-entry batches, never mid-entry, add context
@@ -145,6 +146,11 @@ Core ideas:
   max_cps = 17                  # Thai chars per second, tune by feel
 
 API key: OPENROUTER_API_KEY environment variable only. Never in config or cache.
+
+Config loading rules: every setting has a built-in default, so a missing config.toml
+(beside the script) is a warning, not an error; an explicit --config that does not exist
+is fatal. Values are type- and range-checked on load, unknown keys are ignored with a
+warning, and wire_format "json" is rejected until it is implemented.
 
 
 ### FILES THE TOOL PRODUCES
