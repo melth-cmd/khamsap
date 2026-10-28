@@ -232,3 +232,19 @@ def test_entries_missing_from_the_list_are_absent_from_context():
     entries = [SourceEntry(1, "a"), SourceEntry(2, "b"), SourceEntry(4, "d")]
     batches = batcher.make_batches(entries, size=1, context_after=2)
     assert [c.index for c in batches[0].after] == [2, 4]
+
+
+def test_select_by_indexes():
+    entries = make_entries(5)
+    selected = batcher.select_range(entries, indexes={2, 4})
+    assert [entry.index for entry in selected] == [2, 4]
+
+
+def test_select_by_indexes_ignores_unknown_indexes():
+    assert batcher.select_range(make_entries(3), indexes={99}) == []
+
+
+def test_select_by_indexes_after_a_range():
+    entries = make_entries(10)
+    selected = batcher.select_range(entries, range_="3-6", indexes={1, 4, 6, 8})
+    assert [entry.index for entry in selected] == [4, 6]

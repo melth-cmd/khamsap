@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from typing import Collection, Iterable, Mapping, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -83,17 +83,23 @@ def select_range(
     entries: Sequence[SourceEntry],
     limit: int | None = None,
     range_: str | tuple[int, int] | None = None,
+    indexes: Collection[int] | None = None,
 ) -> list[SourceEntry]:
     """Pick entries by real SRT index, then by count.
 
     `range_` is inclusive on both ends. `limit` keeps the first N of whatever
-    survives the range, which is what --limit does on its own.
+    survives the range, which is what --limit does on its own. `indexes` keeps
+    only those entries; --fix uses it to re-translate exactly the flagged ones.
     """
     selected = list(entries)
 
     if range_ is not None:
         low, high = parse_range(range_)
         selected = [entry for entry in selected if low <= entry.index <= high]
+
+    if indexes is not None:
+        wanted = set(indexes)
+        selected = [entry for entry in selected if entry.index in wanted]
 
     if limit is not None:
         if limit < 0:

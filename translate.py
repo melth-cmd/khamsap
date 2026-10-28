@@ -57,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
         "then stop (no translation)",
     )
     parser.add_argument(
+        "--fix", action="store_true",
+        help="After translating, re-translate only the entries the checks flagged "
+        "(stricter prompt; the report shows what changed)",
+    )
+    parser.add_argument(
         "--force", action="store_true",
         help="Also accept inputs that look like existing translations (*.th.srt), "
         "and rebuild bible/glossary files that already exist",
@@ -205,6 +210,7 @@ def translate_one(
     limit: int | None = None,
     range_: str | None = None,
     notes: bible.Notes | None = None,
+    fix: bool = False,
 ) -> tuple[pipeline.TranslatedFile, Path, Path | None]:
     """Translate a single file and write its report.
 
@@ -240,6 +246,7 @@ def translate_one(
         range_=range_,
         bible=notes.bible if notes is not None else "",
         terms=terms,
+        fix=fix,
     )
     return result, target, write_report_for(source, target, result, terms, settings)
 
@@ -482,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 range_=args.range_,
                 notes=notes.get(source),
+                fix=args.fix,
             )
         except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
             print(f"error: {source.name}: {exc}", file=sys.stderr)

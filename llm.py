@@ -292,10 +292,27 @@ def _format_context(lines: Sequence[ContextLine], include_thai: bool) -> str:
     return "\n".join(rendered)
 
 
+# Added to the system prompt for --fix, where every line was flagged by the
+# verification pass. It repeats the rules that matter for a flagged line,
+# because a plain re-ask tends to produce the same mistake again.
+FIX_RULES = """\
+This is a correction pass. A checker flagged every line below in an earlier attempt,
+so translate each of them again from scratch, with extra care:
+- Every entry must be natural Thai. No other language, and no English except glossary
+  words marked "keep".
+- Use the glossary spelling exactly as given for every term that appears.
+- Keep every [ID] exactly once, in the same order, and keep each entry's number of lines.
+- Keep every placeholder such as {0} exactly once, in its place.
+- Do not repeat the earlier wording: write a fresh translation of the source."""
+
+
 def build_messages(
-    batch: Batch, bible: str = "", glossary: str = ""
+    batch: Batch, bible: str = "", glossary: str = "", strict: bool = False
 ) -> list[dict[str, str]]:
-    """Build the chat messages for one batch."""
+    """Build the chat messages for one batch.
+
+    `strict` adds the correction rules used by --fix for flagged lines.
+    """
     sections: list[str] = []
 
     if bible.strip():
@@ -314,8 +331,9 @@ def build_messages(
         )
     sections.append("[TRANSLATE]\n" + encode_entries(batch.items))
 
+    system = SYSTEM_PROMPT + ("\n\n" + FIX_RULES if strict else "")
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": "\n\n".join(sections)},
     ]
 

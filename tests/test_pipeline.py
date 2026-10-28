@@ -10,6 +10,7 @@ import glossary
 import pipeline
 import srtio
 from batcher import SourceEntry
+from conftest import FakeClient
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -641,3 +642,152 @@ def test_a_term_that_never_appears_changes_nothing_in_the_estimate():
         pipeline.estimate(loaded.subtitles, terms=[absent]).prompt_tokens
         == pipeline.estimate(loaded.subtitles).prompt_tokens
     )
+
+
+# --- --fix (step 20) --------------------------------------------------------
+
+
+def test_fix_retranslates_only_the_flagged_entries(tmp_path):
+    source = make_source(tmp_path, "Hello there.", "To the market.", "See you.")
+    client = FakeClient(
+        ["[1] สวัสดี\n[2] ไปmarketนะ\n[3] เจอกัน", "[2] ไปตลาดนะ"]
+    )
+    result, target = pipeline.translate_file(
+        client, source, fix=True, context_before=0, context_after=0,
+        sleep=lambda seconds: None,
+    )
+
+    assert client.call_count == 2
+    fix_prompt = client.calls[1][1]["content"]
+    assert "[TRANSLATE]\n[2] To the market." in fix_prompt
+    assert "Hello there." not in fix_prompt
+    assert "correction pass" in client.calls[1][0]["content"]
+    assert result.fixed == [2]
+    assert [s.content for s in srtio.load_srt(target).subtitles] == [
+        "สวัสดี", "ไปตลาดนะ", "เจอกัน"
+    ]
+
+
+def test_fix_does_nothing_when_nothing_is_flagged(tmp_path):
+    source = make_source(tmp_path, "Hello there.")
+    client = FakeClient(["[1] สวัสดี"])
+    result, _ = pipeline.translate_file(
+        client, source, fix=True, sleep=lambda seconds: None
+    )
+
+    assert client.call_count == 1
+    assert result.fixed == []
+
+
+def test_a_failed_fix_keeps_the_earlier_translation(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    client = FakeClient(["[1] ไปmarketนะ", "[1] 你好"])
+    result, target = pipeline.translate_file(
+        client, source, fix=True, max_retries=0, sleep=lambda seconds: None
+    )
+
+    assert client.call_count == 2
+    assert result.fixed == [1]
+    assert result.results[0].text == "ไปmarketนะ"
+    assert srtio.load_srt(target).subtitles[0].content == "ไปmarketนะ"
+
+
+def test_the_fix_pass_sees_the_first_pass_as_context(tmp_path):
+    source = make_source(tmp_path, "Hello there.", "To the market.", "See you.")
+    client = FakeClient(
+        ["[1] สวัสดี\n[2] ไปmarketนะ\n[3] เจอกัน", "[2] ไปตลาดนะ"]
+    )
+    pipeline.translate_file(
+        client, source, fix=True, context_before=1, context_after=1,
+        sleep=lambda seconds: None,
+    )
+
+    fix_prompt = client.calls[1][1]["content"]
+    # Before-context carries the first pass's Thai; after-context stays English.
+    assert "TH: สวัสดี" in fix_prompt
+    assert "[3] See you." in fix_prompt
+    assert "TH: เจอกัน" not in fix_prompt
+
+
+def test_fixed_text_is_cached(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    pipeline.translate_file(
+        FakeClient(["[1] ไปmarketนะ", "[1] ไปตลาดนะ"]),
+        source,
+        fix=True,
+        sleep=lambda seconds: None,
+    )
+
+    # Nothing queued: the fixed line must come back from the cache, and a clean
+    # file leaves nothing for a second fix pass to do.
+    second = FakeClient()
+    result, target = pipeline.translate_file(
+        second, source, fix=True, sleep=lambda seconds: None
+    )
+
+    assert second.call_count == 0
+    assert result.fixed == []
+    assert srtio.load_srt(target).subtitles[0].content == "ไปตลาดนะ"
+
+
+def test_fix_works_without_a_cache(tmp_path):
+    source = make_source(tmp_path, "To the market.")
+    client = FakeClient(["[1] ไปmarketนะ", "[1] ไปตลาดนะ"])
+    result, target = pipeline.translate_file(
+        client, source, fix=True, use_cache=False, sleep=lambda seconds: None
+    )
+
+    assert client.call_count == 2
+    assert result.fixed == [1]
+    assert srtio.load_srt(target).subtitles[0].content == "ไปตลาดนะ"
+
+
+def test_ignore_cache_requests_a_cached_entry_again(tmp_path):
+    source = make_source(tmp_path, "Hello there.")
+    pipeline.translate_file(
+        FakeClient(["[1] สวัสดี"]), source, sleep=lambda seconds: None
+    )
+
+    second = FakeClient(["[1] สวัสดีครับ"])
+    result, _ = pipeline.translate_file(
+        second, source, ignore_cache=True, sleep=lambda seconds: None
+    )
+
+    assert second.call_count == 1
+    assert result.results[0].text == "สวัสดีครับ"
+    assert result.results[0].from_cache is False
+
+
+def test_seed_is_used_as_context_only():
+    subtitles = [subtitle(1, "Hello."), subtitle(2, "Bye.", start_s=3)]
+    client = FakeClient(["[2] ลาก่อน"])
+    result = pipeline.translate_subtitles(
+        client,
+        subtitles,
+        indexes={2},
+        ignore_cache=True,
+        seed={1: "สวัสดี"},
+        context_before=1,
+        context_after=0,
+        sleep=lambda seconds: None,
+    )
+
+    prompt = client.calls[0][1]["content"]
+    assert "[TRANSLATE]\n[2] Bye." in prompt
+    assert "TH: สวัสดี" in prompt
+    assert [entry.index for entry in result.results] == [2]
+    assert result.results[0].from_cache is False
+
+
+def test_the_fix_pass_does_not_seed_english_as_context(tmp_path):
+    source = make_source(tmp_path, "Hello there.", "To the market.")
+    # Entry 1 fails (Chinese, no retries), entry 2 is flagged for English.
+    client = FakeClient(["[1] 你好\n[2] ไปmarketนะ", "[2] ไปตลาดนะ"])
+    pipeline.translate_file(
+        client, source, fix=True, max_retries=0, context_before=1, context_after=0,
+        sleep=lambda seconds: None,
+    )
+
+    fix_prompt = client.calls[1][1]["content"]
+    assert "[1] Hello there." in fix_prompt
+    assert "TH: Hello there." not in fix_prompt

@@ -476,6 +476,18 @@ def render_report(
 
     lines.append(layout_summary(translated))
 
+    fixed = getattr(translated, "fixed", [])
+    if fixed:
+        still = sum(
+            1 for index in fixed if any(flag.index == index for flag in verification.flags)
+        )
+        clean = len(fixed) - still
+        detail = f"{clean} clean, {still} still flagged" if still else "all clean now"
+        lines.append(
+            f"Fix pass: re-translated {_plural(len(fixed), 'entry', 'entries')} "
+            f"({detail})"
+        )
+
     if verification.flags:
         lines.append("")
         lines.append(

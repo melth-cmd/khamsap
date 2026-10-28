@@ -374,3 +374,15 @@ def test_system_prompt_states_the_line_count_rule():
     prompt = llm.SYSTEM_PROMPT
     assert "two lines" in prompt
     assert "line breaks" in prompt.lower()
+
+
+def test_strict_messages_add_the_correction_rules():
+    normal = llm.build_messages(make_batch(1))[0]["content"]
+    strict = llm.build_messages(make_batch(1), strict=True)[0]["content"]
+    assert strict.startswith(normal)
+    assert llm.FIX_RULES.strip() in strict
+    assert "correction pass" in strict
+
+
+def test_non_strict_messages_do_not_mention_a_correction():
+    assert "correction pass" not in llm.build_messages(make_batch(1))[0]["content"]

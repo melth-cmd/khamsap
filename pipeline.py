@@ -19,7 +19,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Collection, Mapping, Sequence
 
 import srt
 
@@ -32,6 +32,7 @@ import llm
 import runner
 import srtio
 import tags
+import verify
 from batcher import SourceEntry
 from llm import Usage
 from runner import EntryResult
@@ -68,6 +69,8 @@ class TranslatedFile:
     sources: dict[int, str] = field(default_factory=dict)
     dropped: list[int] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
+    # Entries re-translated by the --fix pass, for the report.
+    fixed: list[int] = field(default_factory=list)
 
     @property
     def failures(self) -> list[EntryResult]:
@@ -152,6 +155,9 @@ def translate_subtitles(
     cache: cache_module.Cache | None = None,
     limit: int | None = None,
     range_: str | tuple[int, int] | None = None,
+    indexes: Collection[int] | None = None,
+    ignore_cache: bool = False,
+    seed: Mapping[int, str] | None = None,
     **runner_kwargs,
 ) -> TranslatedFile:
     """Translate a whole file, batch by batch, keeping timestamps intact.
@@ -163,9 +169,13 @@ def translate_subtitles(
     actually appears in that batch, which keeps the request small and focused.
     The bible is short enough to send with every batch.
 
-    With `limit` or `range_`, only those entries are translated and written.
-    Context is still drawn from the whole file, so a slice is translated with
-    the surrounding lines in view.
+    With `limit`, `range_` or `indexes`, only those entries are translated and
+    written. Context is still drawn from the whole file, so a slice is
+    translated with the surrounding lines in view.
+
+    `ignore_cache` re-requests every selected entry even if it is cached (the
+    result is still written back), which is what --fix needs; `seed` supplies
+    Thai text used as context only, e.g. the first pass when fixing a few lines.
     """
     prepared = prepare(subtitles, strip_hi=strip_hi)
     result = TranslatedFile(dropped=list(prepared.dropped))
@@ -174,7 +184,9 @@ def translate_subtitles(
         log.info("Nothing to translate")
         return result
 
-    selected = batcher.select_range(prepared.entries, limit=limit, range_=range_)
+    selected = batcher.select_range(
+        prepared.entries, limit=limit, range_=range_, indexes=indexes
+    )
     selected_indexes = {entry.index for entry in selected}
     if not selected:
         log.warning("Selection is empty; nothing to translate")
@@ -185,7 +197,7 @@ def translate_subtitles(
             "y" if len(prepared.entries) == 1 else "ies",
         )
 
-    translated: dict[int, str] = {}
+    translated: dict[int, str] = dict(seed or {})
     pending: list[SourceEntry] = []
 
     for entry in prepared.entries:
@@ -199,6 +211,11 @@ def translate_subtitles(
         # without paying to translate them again.
         fixed = layout.rewrap(entry.text, hit)
         translated[entry.index] = fixed.text
+        if ignore_cache:
+            # --fix: the cached text is still useful context, but the entry
+            # itself is what was flagged, so it is requested again.
+            pending.append(entry)
+            continue
         result.results.append(
             EntryResult(
                 index=entry.index,
@@ -210,7 +227,7 @@ def translate_subtitles(
             )
         )
 
-    if cache is not None:
+    if cache is not None and not ignore_cache:
         cached = len(selected) - len(pending)
         log.info(
             "%d entr%s already cached, %d to translate",
@@ -417,6 +434,84 @@ def estimate(
     )
 
 
+def retranslate_flagged(
+    client: llm.ChatClient,
+    subtitles: Sequence[srt.Subtitle],
+    result: TranslatedFile,
+    strip_hi: bool = False,
+    bible: str = "",
+    terms: Sequence[glossary.Term] = (),
+    cache: cache_module.Cache | None = None,
+    **kwargs,
+) -> TranslatedFile:
+    """Re-translate the entries the verification pass flagged (--fix).
+
+    The flagged entries are requested again with the correction rules in the
+    system prompt, ignoring their cached text but using the first pass as
+    context. A fix that comes back valid replaces the old line; one that fails
+    validation again leaves the earlier text in place, because a second failure
+    is no reason to replace a translation that was at least readable.
+
+    `limit`/`range_` are not re-applied: `result` already holds only the
+    entries this run translates, and the flagged ones are a subset of those.
+    """
+    verification = verify.verify_file(result, terms)
+    indexes = verification.entries
+    if not indexes:
+        log.info("--fix: nothing flagged, nothing to re-translate")
+        return result
+
+    log.info(
+        "--fix: re-translating %d flagged entr%s",
+        len(indexes),
+        "y" if len(indexes) == 1 else "ies",
+    )
+    fix_kwargs = {
+        key: value for key, value in kwargs.items() if key not in {"limit", "range_"}
+    }
+    fixed = translate_subtitles(
+        client,
+        subtitles,
+        strip_hi=strip_hi,
+        bible=bible,
+        terms=terms,
+        cache=cache,
+        indexes=indexes,
+        ignore_cache=True,
+        # Only real Thai is context: a failed entry holds English, and labelling
+        # that "TH:" would mislead the model.
+        seed={entry.index: entry.text for entry in result.results if entry.ok},
+        strict=True,
+        **fix_kwargs,
+    )
+
+    by_index = {entry.index: entry for entry in result.results}
+    for entry in fixed.results:
+        if entry.ok:
+            by_index[entry.index] = entry
+        else:
+            log.warning(
+                "entry [%d] still failing after --fix (%s); keeping the earlier text",
+                entry.index,
+                entry.reason,
+            )
+
+    result.results = sorted(by_index.values(), key=lambda entry: entry.index)
+    result.usage = Usage(
+        prompt_tokens=result.usage.prompt_tokens + fixed.usage.prompt_tokens,
+        completion_tokens=result.usage.completion_tokens + fixed.usage.completion_tokens,
+    )
+    result.fixed = list(indexes)
+    result.sources.update(fixed.sources)
+    result.subtitles = _rebuild(
+        subtitles,
+        result,
+        prepare(subtitles, strip_hi=strip_hi),
+        set(by_index),
+    )
+    return result
+
+
 def translate_file(
     client: llm.ChatClient,
     source: str | Path,
@@ -427,6 +522,7 @@ def translate_file(
     model: str = "",
     bible: str = "",
     terms: Sequence[glossary.Term] = (),
+    fix: bool = False,
     **kwargs,
 ) -> tuple[TranslatedFile, Path]:
     """Read, translate and write one file. Returns (result, output path).
@@ -434,6 +530,10 @@ def translate_file(
     `bible` and `terms` are the hand-editable notes for this file. They are part
     of every cache key: editing a term drops the lines that use that word, and
     editing the bible drops everything, because register is shared.
+
+    With `fix`, the flagged entries are re-translated once, after the whole file
+    is done and before anything is written, so the file never holds a half-fixed
+    state.
     """
     source = Path(source)
     loaded = srtio.load_srt(source)
@@ -460,6 +560,17 @@ def translate_file(
         cache=cache,
         **kwargs,
     )
+    if fix:
+        result = retranslate_flagged(
+            client,
+            loaded.subtitles,
+            result,
+            strip_hi=strip_hi,
+            bible=bible,
+            terms=terms,
+            cache=cache,
+            **kwargs,
+        )
     target = Path(output) if output is not None else srtio.output_path_for(source)
     srtio.write_srt(target, result.subtitles, encoding=encoding)
     return result, target

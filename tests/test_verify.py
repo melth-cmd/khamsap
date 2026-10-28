@@ -261,6 +261,7 @@ class FakeFile:
     results: list[FakeResult] = field(default_factory=list)
     sources: dict[int, str] = field(default_factory=dict)
     dropped: list[int] = field(default_factory=list)
+    fixed: list[int] = field(default_factory=list)
 
 
 def test_verify_file_checks_every_entry():
@@ -401,8 +402,14 @@ def translated_file(
     *results: FakeResult,
     sources: dict[int, str] | None = None,
     dropped: list[int] | None = None,
+    fixed: list[int] | None = None,
 ) -> FakeFile:
-    return FakeFile(results=list(results), sources=sources or {}, dropped=dropped or [])
+    return FakeFile(
+        results=list(results),
+        sources=sources or {},
+        dropped=dropped or [],
+        fixed=fixed or [],
+    )
 
 
 def test_report_path_drops_the_en_tag():
@@ -564,3 +571,34 @@ def test_layout_summary_handles_a_plain_file():
 )
 def test_plural(count, word, plural, expected):
     assert verify._plural(count, word, plural) == expected
+
+
+# --- the fix pass in the report --------------------------------------------
+
+
+def test_the_report_notes_a_successful_fix_pass():
+    translated = translated_file(
+        entry(1, "หนึ่ง"), entry(2, "สวัสดี"), sources={1: "One.", 2: "Hello."}, fixed=[1]
+    )
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "Fix pass: re-translated 1 entry (all clean now)" in text
+
+
+def test_the_report_notes_a_fix_that_left_flags():
+    translated = translated_file(
+        entry(1, "สวัสดี world"), sources={1: "Hello world."}, fixed=[1]
+    )
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "Fix pass: re-translated 1 entry (0 clean, 1 still flagged)" in text
+
+
+def test_no_fix_pass_means_no_fix_line():
+    translated = translated_file(entry(1, "สวัสดี"), sources={1: "Hello."})
+    text = verify.render_report(
+        translated, verify.verify_file(translated), now=NOW
+    )
+    assert "Fix pass" not in text

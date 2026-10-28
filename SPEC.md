@@ -310,7 +310,17 @@ Flags written to report.txt, never auto-fixed:
 Entries dropped by HI stripping are not flagged; the report notes how many were removed
 so a surprisingly low entry count is explainable.
 
-Optional --fix: re-translate flagged lines only, with a stricter prompt.
+Optional --fix: after the file is translated, only the entries with a flag are requested
+again, with correction rules added to the system prompt (fresh wording, Thai only, the
+glossary spelling exactly, the same IDs, lines and placeholders). It runs in the same
+invocation, before anything is written, so the .srt is never half-fixed. A fixed line goes
+into the cache and replaces the old one, so a later run without --fix keeps it. A line
+that fails validation again keeps its earlier text, because a second failure is no reason
+to lose a readable line. The report says how many lines were re-translated and how many
+are still flagged. On an already translated file only the fix pass costs anything; the
+first pass is served from cache. --limit/--range apply to the first pass; the fix pass
+stays inside the same selection.
+
 Optional --review: a second LLM pass that sees only flagged lines plus context and
 proposes corrections (written to the report, applied only with --fix).
 

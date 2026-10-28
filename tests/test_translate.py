@@ -957,3 +957,46 @@ def test_an_unwritable_report_only_warns(project, fake, capsys, monkeypatch):
     assert status == 0
     assert (project / "sample.th.srt").exists()
     assert "report:" not in captured.err
+
+
+# --- --fix (step 20) --------------------------------------------------------
+
+# Entry 2 keeps an English word in the first pass; the fix pass must redo only it.
+MIXED_REPLIES = "[1] สวัสดี\n[2] ไปmarketนะ\n[3] {0}สบายดี{1}"
+
+
+def test_fix_retranslates_the_flagged_line(project, fake, capsys):
+    fake.queue(MIXED_REPLIES).queue("[2] ไปตลาดนะ")
+    status = run(project, fake, project / "sample.en.srt", "--fix")
+
+    out = srtio.load_srt(project / "sample.th.srt")
+    report = (project / "sample.report.txt").read_text(encoding="utf-8")
+    assert status == 0
+    assert fake.call_count == 2
+    assert "[TRANSLATE]\n[2] How are you?" in fake.calls[1][1]["content"]
+    assert "correction pass" in fake.calls[1][0]["content"]
+    assert out.subtitles[1].content == "ไปตลาดนะ"
+    assert out.subtitles[0].content == "สวัสดี"
+    assert "Fix pass: re-translated 1 entry (all clean now)" in report
+    assert "nothing flagged" in report
+
+
+def test_fix_makes_no_extra_call_when_nothing_is_flagged(project, fake):
+    fake.queue(REPLIES)
+    status = run(project, fake, project / "sample.en.srt", "--fix")
+
+    assert status == 0
+    assert fake.call_count == 1
+    assert "Fix pass" not in (project / "sample.report.txt").read_text(encoding="utf-8")
+
+
+def test_fix_reports_what_still_fails(project, fake):
+    # The fix attempt leaks Chinese too, so the earlier Thai is kept.
+    fake.queue(MIXED_REPLIES).queue("[2] 你好").queue("[2] 你好").queue("[2] 你好").queue("[2] 你好")
+    status = run(project, fake, project / "sample.en.srt", "--fix")
+
+    out = srtio.load_srt(project / "sample.th.srt")
+    report = (project / "sample.report.txt").read_text(encoding="utf-8")
+    assert status == 0
+    assert out.subtitles[1].content == "ไปmarketนะ"
+    assert "Fix pass: re-translated 1 entry (0 clean, 1 still flagged)" in report

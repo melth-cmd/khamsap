@@ -356,7 +356,36 @@ Phase 4: Verification
         Phase 4 complete.
 
 Phase 5: Extras
- 20. --fix (stricter prompt, flagged lines only)
+ 20. [x] --fix (stricter prompt, flagged lines only)
+     Agreed with user: every flagged entry is fixed (all kinds, not just hard ones), and
+     the fix runs in the same invocation right after the first pass, so running --fix on
+     an already translated file costs only the fix pass (the first pass is cached).
+     -> llm.py: FIX_RULES, appended to the system prompt when build_messages(strict=True):
+        fresh wording, Thai only, glossary spelling exact, same IDs/lines/placeholders.
+     -> runner.py: strict=False parameter, forwarded to build_messages; retries keep it.
+     -> batcher.py: select_range(indexes=...) keeps exactly those entries (after range,
+        before limit), which is the selection --fix needs.
+     -> pipeline.py: translate_subtitles(indexes=, ignore_cache=, seed=); ignore_cache
+        re-requests a cached entry but keeps its text as context, and still writes the new
+        result back through the cache; seed feeds first-pass Thai in as context only.
+        retranslate_flagged(): verify -> re-request the flagged indexes with strict=True,
+        cache on, seed = the successful first-pass Thai (an English fallback is never
+        seeded as "TH:"); merge only ok results and keep the earlier text for a line that
+        fails again (warning); add usage; set TranslatedFile.fixed; rebuild subtitles.
+        translate_file(fix=True) runs it after the whole file and before writing, so the
+        .srt is never half-fixed. --limit/--range are not re-applied in the fix pass,
+        because the flagged entries are a subset of what the run translated.
+     -> verify.render_report(): "Fix pass: re-translated N entries (all clean now)" or
+        "(X clean, Y still flagged)", so the report always describes the shipped file.
+     -> translate.py: --fix flag, passed through translate_one().
+     Tests: 22 new (3 batcher, 2 llm, 2 runner, 9 pipeline, 3 verify, 3 CLI) = 623 passing.
+     Fake-client run: a mixed file re-requested only the flagged line, with the correction
+     prompt and the first pass as context; the fixed text was written and cached, a rerun
+     made 0 calls, and a fix that failed again kept the earlier Thai and said so in the
+     report.
+     Known: a fatal error during the fix pass aborts before the .srt is written; the first
+     pass is cached, so rerunning costs nothing. PROMPT_VERSION stays 1: a fixed line is
+     cached as an ordinary result, which is what a later run should keep.
  21. --review second pass
  22. Bilingual output option
  23. Other providers (different base URL + key env var)
@@ -406,8 +435,9 @@ Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plu
 post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is complete
 (item 15 pre-pass, item 16 reload the files each run, item 17 per-batch glossary +
 cache keys). Phase 4 is complete: item 18 added the checks (verify.py) and item 19 writes
-report.txt after every translating run. Next is Phase 5, item 20: --fix (a stricter prompt
-for flagged lines only, re-translating just those), then item 21 --review.
+report.txt after every translating run. Phase 5 has started: item 20 (--fix) is done and
+re-translates flagged entries in the same run. Next is item 21: --review (a second pass
+that proposes corrections in the report, applied only with --fix).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -463,7 +493,15 @@ Open threads carried forward
   - The summary line still has no flag count: the report path is printed on stderr instead.
     Add a count there only if it turns out to be missed.
   - bible.py and glossary.py are written (items 15-17); verify.py holds checks + report
-    (items 18-19).
+    (items 18-19); pipeline.retranslate_flagged() is item 20 (--fix).
+  - Item 20 done: --fix re-translates every flagged entry after the first pass, in the
+    same invocation, with llm.FIX_RULES and ignore_cache=True. Fixed lines are merged only
+    when valid (a second failure keeps the earlier text) and go into the cache, so a rerun
+    without --fix keeps them. The report's "Fix pass:" line describes the shipped file.
+    The fix pass uses the first pass's Thai as before-context (never the English fallback).
+  - Item 21 (--review) is the next step: a second LLM pass over flagged lines that writes
+    proposals into report.txt. It needs the flags (verify.verify_file) and the current
+    text; it must not write the .srt. --fix is the only thing that changes text.
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;

@@ -128,6 +128,7 @@ def translate_batch(
     max_delay: float = 30.0,
     jitter: float = 0.25,
     max_retry_after: float = 120.0,
+    strict: bool = False,
     sleep: Callable[[float], None] = time.sleep,
     rand: Callable[[], float] = random.random,
 ) -> BatchResult:
@@ -136,6 +137,9 @@ def translate_batch(
     The retry budget is shared: a validation failure, a 429 or a timeout all
     consume one retry. The first call uses the client's own temperature; every
     retry uses `retry_temperature` to make a repeat less likely.
+
+    `strict` adds the correction rules to the system prompt; --fix uses it for
+    lines the verification pass flagged.
     """
     result = BatchResult()
     if not batch.items:
@@ -153,7 +157,7 @@ def translate_batch(
             before=batch.before,
             after=batch.after,
         )
-        messages = llm.build_messages(sub_batch, bible, glossary)
+        messages = llm.build_messages(sub_batch, bible, glossary, strict=strict)
         temperature = None if retries_used == 0 else retry_temperature
         result.calls += 1
 

@@ -284,3 +284,15 @@ def test_context_is_resent_on_retry(fake_client):
     fake_client.queue("[2] สวัสดี")
     run(batch, fake_client)
     assert "[CONTEXT BEFORE - do not translate]\n[1] Earlier." in fake_client.calls[1][1]["content"]
+
+
+def test_strict_is_passed_to_the_prompt(fake_client):
+    fake_client.queue("[1] สวัสดี")
+    run(batch_of([(1, "Hello.")]), fake_client, strict=True)
+    assert "correction pass" in fake_client.calls[0][0]["content"]
+
+
+def test_strict_is_off_by_default(fake_client):
+    fake_client.queue("[1] สวัสดี")
+    run(batch_of([(1, "Hello.")]), fake_client)
+    assert "correction pass" not in fake_client.calls[0][0]["content"]
