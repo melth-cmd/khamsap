@@ -58,7 +58,19 @@ Phase 1: Core translator, command line
       Exhausted -> EntryResult(ok=False, reason=..., text=original English), never cached.
       AuthError is fatal and never retried; no fallback model, no extra prompt line.
       tests/test_runner.py: 24 passing (156 total).
- 6. Reassemble with original timestamps; write .th.srt (UTF-8, optional BOM)
+ 6. [x] Reassemble with original timestamps; write .th.srt (UTF-8, optional BOM)
+      -> pipeline.py: prepare / translate_subtitles / translate_file ; srtio.output_path_for
+      Order: parse -> HI strip -> protect tags -> batch -> translate -> restore -> rebuild -> write.
+      Dropped entries (HI or no words left after tag protection) are excluded from batches and
+      from the output, so the file may have fewer rows than the source.
+      Timestamps, indexes and proprietary fields are copied from the source entry, never rebuilt.
+      Context-before Thai is fed forward batch to batch. Results sorted by index; failures kept
+      as English with ok=False for the report.
+      Output naming strips ".en" (case-insensitive) instead of appending blindly.
+      tests/test_pipeline.py: 19 passing (175 total).
+      Live end-to-end run OK: <i> tags restored, multi-line entry translated, no failures.
+      Known gap: the model may join a two-line entry into one line; line breaks are not
+      preserved or checked yet. Candidate for the step 18 verification report.
  7. API key from env var; model and settings in config.toml
  8. JSON cache saved after each batch (resume on rerun)
  9. Context lines (previous English+Thai, next English)

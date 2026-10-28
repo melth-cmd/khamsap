@@ -146,6 +146,19 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
+def output_path_for(source: str | Path, suffix: str = ".th.srt") -> Path:
+    """Pick the output path: strip ".en" rather than appending ".th" blindly.
+
+    Movie (2026).en.srt -> Movie (2026).th.srt
+    Movie (2026).srt    -> Movie (2026).th.srt
+    """
+    source = Path(source)
+    stem = source.stem if source.suffix else source.name
+    if stem.lower().endswith(".en"):
+        stem = stem[:-3]
+    return source.with_name(stem + suffix)
+
+
 def write_srt(
     path: str | Path,
     subtitles: Iterable[srt.Subtitle],

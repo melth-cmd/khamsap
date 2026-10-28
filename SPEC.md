@@ -107,6 +107,7 @@ Core ideas:
   batcher.py          split into ~60-entry batches, never mid-entry, add context
   llm.py              OpenRouter client, timeout, wire-format encode/decode, validation
   runner.py           translate one batch: validate replies, retry only what failed
+  pipeline.py         one file end to end: prepare, batch, translate, restore, rebuild
   cache.py            JSON cache, per-entry keys, atomic writes
   bible.py            pre-pass: story bible + glossary generation and loading
   glossary.py         load TOML glossary, select entries per batch
