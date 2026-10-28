@@ -41,8 +41,12 @@ Core ideas:
 
    Optional HI (hearing-impaired) stripping: with [cleanup] strip_hi enabled, bracketed
    and parenthesized descriptions ([door slams], (laughs), [MUSIC PLAYING]) are removed
-   from the SOURCE before batching, so they are never sent or paid for. Music markers
-   and speaker labels are kept. An entry left with no words is dropped from the output
+   from the SOURCE before batching, so they are never sent or paid for.
+
+   Speaker attribution survives: a bracket containing capitals is treated as a name and
+   kept ([Maya], [Mr. O], [Yuki speaking Japanese]). All-caps brackets are still cues
+   and go ([MUSIC PLAYING]). A few cues that happen to be mixed-case survive too
+   ([Anna chuckles]); that is accepted, because deleting the speaker's name is worse. An entry left with no words is dropped from the output
    entirely, so the translated file may legitimately contain fewer entries than the
    source; verification is told to expect that. Default off, since removing sound cues
    is a viewing preference, not a translation one.
@@ -68,25 +72,21 @@ Core ideas:
    wrong and easy to fix by hand. Failed entries are not cached, so a rerun re-requests
    them. No fallback model.
 
-7. Reading-speed check instead of length-ratio check.
-   Using the timestamps, flag entries whose Thai characters-per-second exceed a
-   configurable limit. That catches subtitles that are unreadable on screen.
-
-8. Context in both directions.
+7. Context in both directions.
    Previous 3-5 lines: English AND the Thai already produced (carries tone/pronouns).
    Next 2-3 lines: English only (helps with sentences split across entries).
    Context lines are marked "context only, do not translate".
 
-9. Smart cache keys.
+8. Smart cache keys.
    Key per entry = hash(source text + model + prompt version + glossary entries that
    apply to that entry). Editing the glossary only invalidates the affected lines.
 
-10. GUI dropped (optional, probably never).
+9. GUI dropped (optional, probably never).
     The pain points were translation quality and the paste loop; a CLI fixes both.
     Replaced by a bilingual output option (English line above Thai) which gives
     side-by-side checking in any video player for almost no code.
 
-11. Cache, context, multi-file batching and --limit/--dry-run moved into early phases.
+10. Cache, context, multi-file batching and --limit/--dry-run moved into early phases.
 
 
 ### TECH STACK
@@ -137,13 +137,10 @@ Core ideas:
   [output]
   encoding = "utf-8"            # or "utf-8-sig" for TVs/old players that garble Thai
   bilingual = false             # English line above Thai
-  strip_en_suffix = true        # Movie.en.srt -> Movie.th.srt
+  strip_en_suffix = true        # ".en." becomes ".th." wherever it stands
 
   [cleanup]
   strip_hi = false              # drop [sound effects] and (descriptions) from the source
-
-  [verify]
-  max_cps = 17                  # Thai chars per second, tune by feel
 
 API key: OPENROUTER_API_KEY environment variable only. Never in config or cache.
 
@@ -172,7 +169,14 @@ warning, and wire_format "json" is rejected until it is implemented.
                               are never cached, so a rerun re-requests only them)
   Movie (2026).report.txt    verification flags (entry number, original, translation, reason)
 
-Output naming: strip ".en" rather than appending ".th" blindly.
+Output naming: the ".en." tag becomes ".th." wherever it stands in the name, and ".th"
+is appended before the extension when there is no such tag:
+  Movie (2026).en.srt            -> Movie (2026).th.srt
+  Show.S01E01.en.hi_partial.srt  -> Show.S01E01.th.hi_partial.srt
+  Movie (2026).srt               -> Movie (2026).th.srt
+  (strip_en_suffix = false keeps the tag: Movie.en.srt -> Movie.en.th.srt)
+Sidecar files (cache, bible, glossary, report) drop the tag instead of rewriting it,
+so Movie.en.srt gives Movie.cache.json.
 
 
 ### TRANSLATION PROMPT REQUIREMENTS
@@ -217,9 +221,11 @@ and only the glossary entries relevant to each batch.
 Flags written to report.txt, never auto-fixed:
 - Leftover English words not in the glossary's "keep" list
 - Glossary terms present in the source but missing or inconsistent in the Thai
-- Reading speed above max_cps (using the original timestamps)
 - Tag count mismatch with source
 - Empty or suspiciously short/long output
+- Line count changed: a two-line entry that came back as one line, or the reverse
+- Speaker dashes lost: an entry whose "- " lines came back without them, which blurs
+  who is speaking
 
 Entries dropped by HI stripping are not flagged; the report notes how many were removed
 so a surprisingly low entry count is explainable.

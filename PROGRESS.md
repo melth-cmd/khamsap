@@ -20,11 +20,14 @@ Phase 1: Core translator, command line
       tests/test_tags.py: 23 passing.
  2b. [x] HI stripping (hi.py)
       -> hi.py: strip_hi(text) -> HiResult(text, removed) with .changed and .dropped
-      Removes [] and () descriptions only; music markers, speaker labels and dashes stay.
+      Removes [] and () descriptions only; music markers and speaker dashes stay.
+      Capitalised brackets are treated as names and kept ([Maya], [Mr. O]); all-caps
+      brackets are still removed ([MUSIC PLAYING]). Mixed-case cues like [Anna chuckles]
+      survive; accepted trade-off, deleting a speaker name is worse.
       Lines left holding just a dash are removed; nothing spanning a line break is eaten,
       and text with no descriptions is returned unchanged (whitespace included).
       .dropped means no letters/digits remain, i.e. the entry must be omitted from output.
-      tests/test_hi.py: 17 passing. SPEC.md updated: design item 4, config [cleanup],
+      tests/test_hi.py: 24 passing. SPEC.md updated: design item 4, config [cleanup],
       prompt rules, --strip-hi flag and verification note.
  3. [x] Split into ~60-entry batches, never mid-entry
       -> batcher.py: SourceEntry / ContextLine / Batch, select_range, parse_range, make_batches
@@ -66,7 +69,9 @@ Phase 1: Core translator, command line
       Timestamps, indexes and proprietary fields are copied from the source entry, never rebuilt.
       Context-before Thai is fed forward batch to batch. Results sorted by index; failures kept
       as English with ok=False for the report.
-      Output naming strips ".en" (case-insensitive) instead of appending blindly.
+      Output naming: ".en." becomes ".th." wherever it stands (Show.en.hi_partial.srt ->
+      Show.th.hi_partial.srt), else ".th" is inserted before the extension. Sidecars
+      (cache) drop the tag instead: Show.en.hi_partial.srt -> Show.hi_partial.cache.json.
       tests/test_pipeline.py: 19 passing (175 total).
       Live end-to-end run OK: <i> tags restored, multi-line entry translated, no failures.
       Known gap: the model may join a two-line entry into one line; line breaks are not
@@ -127,7 +132,13 @@ Phase 3: Story bible and glossary
  17. Inject bible (short form) and per-batch glossary entries into every request
 
 Phase 4: Verification
- 18. Leftover English, glossary consistency, reading speed, tag mismatch
+ 18. Leftover English, glossary consistency, tag mismatch (reading speed DROPPED: not a
+     priority, may add later - do not build it)
+     Also report, from the PEN15 test run:
+     - line count changed: a 2-line entry back as 1 line. 76 entries in that file are
+       multi-line, so this is not hypothetical; the model joined one in a live run.
+     - speaker dashes lost: 48 entries have "- " lines; losing the dash blurs who speaks.
+     Reference numbers from that file: 179 entries, 76 multi-line, 46 with dashes.
  19. report.txt only, no auto-fix
 
 Phase 5: Extras

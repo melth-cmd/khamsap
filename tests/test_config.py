@@ -25,7 +25,6 @@ def test_empty_mapping_gives_documented_defaults():
     assert settings.batch.context_before == 4
     assert settings.output.encoding == "utf-8"
     assert settings.cleanup.strip_hi is False
-    assert settings.verify.max_cps == 17.0
 
 
 def test_missing_default_file_is_not_fatal(monkeypatch, tmp_path):
@@ -63,8 +62,6 @@ encoding = "utf-8-sig"
 strip_en_suffix = false
 [cleanup]
 strip_hi = true
-[verify]
-max_cps = 20
 """,
     )
     settings = config.load_settings(path)
@@ -75,7 +72,6 @@ max_cps = 20
     assert settings.output.encoding == "utf-8-sig"
     assert settings.output.strip_en_suffix is False
     assert settings.cleanup.strip_hi is True
-    assert settings.verify.max_cps == 20.0
     assert settings.path == path
 
 
@@ -119,7 +115,6 @@ def test_broken_toml_raises_with_location(tmp_path):
         ("[batch]\ncontext_after = -1", "at least 0"),
         ('[output]\nencoding = "utf-99"', "not a known codec"),
         ('[output]\nbilingual = "yes"', "true or false"),
-        ("[verify]\nmax_cps = 0", "at least 1"),
         ('[llm]\nwire_format = "json"', "not implemented"),
         ('llm = "not a table"', "must be a table"),
     ],

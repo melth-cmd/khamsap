@@ -104,3 +104,45 @@ def test_dropped_and_changed_are_independent():
     result = hi.strip_hi("...")
     assert not result.changed
     assert result.dropped
+
+
+# --- capitalised brackets are names, not cues -------------------------------
+
+
+def test_keeps_character_name():
+    result = hi.strip_hi("[Maya] <i>Oh, my God, Na.</i>")
+    assert result.text == "[Maya] <i>Oh, my God, Na.</i>"
+    assert result.removed == ()
+
+
+def test_keeps_name_with_abbreviation():
+    result = hi.strip_hi("[Mr. O] Sit down.")
+    assert result.text == "[Mr. O] Sit down."
+
+
+def test_keeps_name_with_description():
+    result = hi.strip_hi("[Yuki speaking Japanese]")
+    assert result.text == "[Yuki speaking Japanese]"
+    assert not result.dropped
+
+
+def test_keeps_name_and_removes_cue_in_the_same_line():
+    result = hi.strip_hi("[Maya] [door slams] I'm home.")
+    assert result.text == "[Maya] I'm home."
+    assert result.removed == ("[door slams]",)
+
+
+def test_all_caps_cue_is_still_removed():
+    result = hi.strip_hi("[MUSIC PLAYING] We meet again.")
+    assert result.text == "We meet again."
+
+
+def test_lowercase_cue_is_removed():
+    result = hi.strip_hi("[school bell rings] Class begins.")
+    assert result.text == "Class begins."
+
+
+def test_name_only_entry_is_not_dropped():
+    result = hi.strip_hi("[Maya]")
+    assert result.text == "[Maya]"
+    assert not result.dropped

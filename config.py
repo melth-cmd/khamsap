@@ -62,17 +62,11 @@ class CleanupSettings:
 
 
 @dataclass(frozen=True)
-class VerifySettings:
-    max_cps: float = 17.0
-
-
-@dataclass(frozen=True)
 class Settings:
     llm: LLMSettings = field(default_factory=LLMSettings)
     batch: BatchSettings = field(default_factory=BatchSettings)
     output: OutputSettings = field(default_factory=OutputSettings)
     cleanup: CleanupSettings = field(default_factory=CleanupSettings)
-    verify: VerifySettings = field(default_factory=VerifySettings)
     path: Path | None = None
 
 
@@ -199,19 +193,12 @@ def settings_from_dict(data: Mapping[str, Any], path: Path | None = None) -> Set
         strip_hi=_boolean(cleanup_section, "strip_hi", False, "cleanup"),
     )
 
-    verify_section = _table(data, "verify")
-    _check_keys(verify_section, {"max_cps"}, "verify")
-    verify_settings = VerifySettings(
-        max_cps=_number(verify_section, "max_cps", 17.0, "verify", 1.0),
-    )
-
-    _check_keys(data, {"llm", "batch", "output", "cleanup", "verify"}, "root")
+    _check_keys(data, {"llm", "batch", "output", "cleanup"}, "root")
     return Settings(
         llm=llm_settings,
         batch=batch_settings,
         output=output_settings,
         cleanup=cleanup_settings,
-        verify=verify_settings,
         path=path,
     )
 

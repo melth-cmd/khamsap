@@ -27,6 +27,3 @@ strip_en_suffix = true           # Movie.en.srt -> Movie.th.srt
 
 [cleanup]
 strip_hi = false                 # drop [sound effects] and (descriptions)
-
-[verify]
-max_cps = 17                     # Thai characters per second, tune by feel

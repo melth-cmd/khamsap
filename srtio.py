@@ -146,31 +146,54 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
+# ".en." anywhere in the name marks the source language, e.g. Movie.en.srt,
+# Show.S01E01.en.hi_partial.srt.
+_EN_TOKEN_RE = re.compile(r"\.en\.", re.IGNORECASE)
+
+
+def _stem(source: Path) -> str:
+    return source.stem if source.suffix else source.name
+
+
 def sidecar_path(
     source: str | Path, suffix: str, strip_en_suffix: bool = True
 ) -> Path:
-    """A file next to `source` sharing its stem: .th.srt, .cache.json, .bible.md.
+    """A file next to `source` sharing its name: .cache.json, .bible.md.
 
-    The ".en" is stripped rather than appended after, so
-    Movie (2026).en.srt gives Movie (2026).cache.json, not Movie (2026).en.cache.json.
+    The ".en." tag is dropped here rather than rewritten, so
+    Movie.en.srt gives Movie.cache.json and Show.en.hi_partial.srt gives
+    Show.hi_partial.cache.json.
     """
     source = Path(source)
-    stem = source.stem if source.suffix else source.name
-    if strip_en_suffix and stem.lower().endswith(".en"):
-        stem = stem[:-3]
+    stem = _stem(source)
+    if strip_en_suffix and _EN_TOKEN_RE.search(stem + "."):
+        stem = _EN_TOKEN_RE.sub(".", stem + ".").rstrip(".")
     return source.with_name(stem + suffix)
 
 
 def output_path_for(
     source: str | Path, suffix: str = ".th.srt", strip_en_suffix: bool = True
 ) -> Path:
-    """Pick the output path: strip ".en" rather than appending ".th" blindly.
+    """Pick the output path: ".en." becomes ".th." where it stands.
 
-    Movie (2026).en.srt -> Movie (2026).th.srt
-    Movie (2026).srt    -> Movie (2026).th.srt
+    Movie (2026).en.srt                 -> Movie (2026).th.srt
+    Show.S01E01.en.hi_partial.srt       -> Show.S01E01.th.hi_partial.srt
+    Movie (2026).srt                    -> Movie (2026).th.srt
     With strip_en_suffix off: Movie.en.srt -> Movie.en.th.srt
     """
-    return sidecar_path(source, suffix, strip_en_suffix=strip_en_suffix)
+    source = Path(source)
+    stem = _stem(source)
+    if not strip_en_suffix:
+        return source.with_name(stem + suffix)
+
+    if _EN_TOKEN_RE.search(stem + "."):
+        replaced = _EN_TOKEN_RE.sub(".th.", stem + ".").rstrip(".")
+        trailing = Path(suffix).suffix  # ".srt"
+        if not replaced.lower().endswith(trailing.lower()):
+            replaced += trailing
+        return source.with_name(replaced)
+
+    return source.with_name(stem + suffix)
 
 
 def write_srt(
