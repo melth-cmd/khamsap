@@ -161,3 +161,42 @@ Phase 5: Extras
   repaired on read, and bumping would throw away every cache for a layout fix.
   Not implemented on purpose: max chars per line (no convention chosen yet); lines are
   split at the source's break points, not to a width.
+
+### DEV NOTES (for a fresh session)
+
+Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
+post-phase line-break work). Phase 2 starts at item 11.
+
+Environment
+  - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
+  - Install deps:   uv pip install -r requirements.txt
+  - Tests:          .venv/bin/python -m pytest -q      (run from the project root;
+                    pytest.ini sets pythonpath=. so imports resolve)
+  - Live test:      pytest -m live     (excluded by default; needs OPENROUTER_API_KEY;
+                    one real call, well under a cent)
+  - Secret guard:   git config core.hooksPath .githooks   (already set in this clone)
+  - API key: environment only. [llm] key_env holds the variable NAME, never the key.
+
+Modules (one line each)
+  srtio      read/parse/write, encoding fallback, output + sidecar naming
+  tags       {0} placeholders: protect / check / restore
+  hi         strip SDH descriptions; capitalised brackets ([Maya]) are kept
+  batcher    batching, context lines, select_range (real SRT indexes)
+  llm        OpenRouter client, wire format, prompt, validate (IDs/Thai/script/tags)
+  runner     one batch: retry only failures, backoff, English fallback
+  cache      per-entry JSON cache, atomic saves
+  layout     rewrap translated text to the source line count (dash / proportional)
+  pipeline   prepare -> batch -> translate -> restore -> rebuild -> write
+  config     config.toml loading/validation, build_client
+  translate  argparse CLI
+
+Open threads carried into Phase 2
+  - Item 11 must fold the glossary into cache keys. PROMPT_VERSION is still 1 and was
+    deliberately NOT bumped for the line-break prompt rule: old entries are repaired on
+    read by layout.py, so bumping would have thrown away every cache for a layout fix.
+  - No max chars-per-line rule exists. layout.py splits at the source's break points only.
+  - report.txt is not written yet (item 19). Failures and rewraps live in
+    EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
+  - verify.py, bible.py and glossary.py are still empty.
+  - Test material from this phase lived in /tmp/opencode (PEN15 sample, edge-case files);
+    /tmp may be cleared, so copy anything worth keeping.
