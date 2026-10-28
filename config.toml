@@ -15,6 +15,15 @@ wire_format = "tagged"           # or "json"
 input_usd_per_mtok = 0.30
 output_usd_per_mtok = 1.20
 
+# Another OpenAI-compatible provider: change base_url, key_env and model, and
+# export the new key, e.g.
+#   base_url = "https://api.deepseek.com/v1"
+#   key_env  = "DEEPSEEK_API_KEY"
+#   model    = "deepseek-chat"
+# If the provider asks for extra request headers (never the key itself):
+# [llm.extra_headers]
+# "HTTP-Referer" = "https://example.test"
+
 [batch]
 size = 60
 context_before = 4

@@ -1,4 +1,4 @@
-"""OpenRouter client and the tagged wire format.
+"""Chat-API client (OpenRouter by default) and the tagged wire format.
 
 Text goes out as one line per entry:
 
@@ -396,9 +396,18 @@ class ChatClient(Protocol):
 _SECRET_SHAPED_RE = re.compile(r"^sk-(or-)?[A-Za-z0-9_-]{16,}$")
 
 
+def looks_like_key(value: str) -> bool:
+    """True if `value` looks like an API key rather than a variable name.
+
+    Used to catch a key pasted into config.toml (key_env, extra_headers) and to
+    say so without repeating it.
+    """
+    return bool(_SECRET_SHAPED_RE.match(value.strip()))
+
+
 def load_api_key(key_env: str = DEFAULT_KEY_ENV) -> str:
     """Read the API key from the environment. Never logs it."""
-    if _SECRET_SHAPED_RE.match(key_env.strip()):
+    if looks_like_key(key_env):
         # The user pasted the key into key_env. Say so without repeating it.
         raise AuthError(
             "config key_env holds something that looks like an API key.\n"
@@ -454,7 +463,12 @@ def _retry_after(exc: Exception) -> float | None:
 
 
 class OpenRouterClient:
-    """OpenRouter over the OpenAI SDK, with SDK retries disabled."""
+    """An OpenAI-compatible chat API over the OpenAI SDK.
+
+    OpenRouter by default, but base_url and key_env come from config, so any
+    OpenAI-compatible endpoint (DeepSeek, Groq, a local vLLM...) works the same
+    way. SDK retries are disabled: the runner owns the retry budget.
+    """
 
     def __init__(
         self,
@@ -464,6 +478,7 @@ class OpenRouterClient:
         temperature: float = 0.25,
         timeout_s: float = 120,
         key_env: str = DEFAULT_KEY_ENV,
+        extra_headers: Mapping[str, str] | None = None,
     ):
         try:
             from openai import OpenAI
@@ -477,6 +492,7 @@ class OpenRouterClient:
             base_url=base_url,
             timeout=timeout_s,
             max_retries=0,  # retries are decided by the caller, not the SDK
+            default_headers=dict(extra_headers) if extra_headers else None,
         )
 
     def complete(
@@ -498,10 +514,12 @@ class OpenRouterClient:
         except openai.RateLimitError as exc:
             retry_after = _retry_after(exc)
             raise RateLimited(
-                "rate limited by OpenRouter", retry_after=retry_after
+                "rate limited by the API", retry_after=retry_after
             ) from None
         except openai.AuthenticationError as exc:
-            raise AuthError("OpenRouter rejected the API key") from None
+            raise AuthError(
+                "the API rejected the API key (check the variable named in [llm] key_env)"
+            ) from None
         except openai.APITimeoutError as exc:
             raise TransportError("request timed out") from None
         except openai.APIConnectionError as exc:
@@ -511,10 +529,10 @@ class OpenRouterClient:
             # moment, not a bad request: retry them like a timeout.
             if exc.status_code >= 500 or exc.status_code in {408, 409, 425}:
                 raise TransportError(
-                    f"OpenRouter returned HTTP {exc.status_code}",
+                    f"the API returned HTTP {exc.status_code}",
                     retry_after=_retry_after(exc),
                 ) from None
-            raise LLMError(f"OpenRouter returned HTTP {exc.status_code}") from None
+            raise LLMError(f"the API returned HTTP {exc.status_code}") from None
 
         choices = getattr(response, "choices", None) or []
         if not choices:

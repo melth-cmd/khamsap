@@ -152,3 +152,64 @@ def test_build_client_uses_settings(monkeypatch):
     client = config.build_client(settings)
     assert client.model == "m/x"
     assert client.temperature == 0.4
+
+
+# --- extra headers (other providers, step 22) -------------------------------
+
+
+def test_extra_headers_default_to_empty():
+    settings = config.settings_from_dict({"llm": {"model": "m/x"}})
+    assert settings.llm.extra_headers == {}
+
+
+def test_extra_headers_are_read_from_a_table():
+    settings = config.settings_from_dict(
+        {"llm": {"model": "m/x", "extra_headers": {"HTTP-Referer": "https://me.test"}}}
+    )
+    assert settings.llm.extra_headers == {"HTTP-Referer": "https://me.test"}
+
+
+def test_extra_headers_must_be_a_table():
+    with pytest.raises(config.ConfigError, match="must be a table"):
+        config.settings_from_dict({"llm": {"model": "m/x", "extra_headers": "nope"}})
+
+
+def test_extra_header_values_must_be_strings():
+    with pytest.raises(config.ConfigError, match="must be a string"):
+        config.settings_from_dict(
+            {"llm": {"model": "m/x", "extra_headers": {"X-Count": 3}}}
+        )
+
+
+def test_extra_headers_may_not_set_authorization():
+    with pytest.raises(config.ConfigError, match="must not set Authorization"):
+        config.settings_from_dict(
+            {"llm": {"model": "m/x", "extra_headers": {"Authorization": "Bearer thing"}}}
+        )
+
+
+def test_a_key_shaped_header_is_rejected_without_echoing_it():
+    secret = "sk-" + "a" * 40
+    with pytest.raises(config.ConfigError) as excinfo:
+        config.settings_from_dict(
+            {"llm": {"model": "m/x", "extra_headers": {"X-Key": secret}}}
+        )
+    assert "looks like an API key" in str(excinfo.value)
+    assert secret not in str(excinfo.value)
+
+
+def test_build_client_passes_the_extra_headers(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    captured: dict = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm, "OpenRouterClient", FakeClient)
+    settings = config.settings_from_dict(
+        {"llm": {"model": "m/x", "extra_headers": {"HTTP-Referer": "https://me.test"}}}
+    )
+    config.build_client(settings)
+    assert captured["extra_headers"] == {"HTTP-Referer": "https://me.test"}
+    assert captured["base_url"] == llm.DEFAULT_BASE_URL

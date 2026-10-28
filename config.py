@@ -40,6 +40,8 @@ class LLMSettings:
     wire_format: str = "tagged"
     input_usd_per_mtok: float = 0.0
     output_usd_per_mtok: float = 0.0
+    # Extra request headers, for OpenAI-compatible providers that ask for them.
+    extra_headers: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,40 @@ def _boolean(section: Mapping[str, Any], key: str, default: bool, name: str) -> 
     return value
 
 
+def _headers(section: Mapping[str, Any], key: str, name: str) -> dict[str, str]:
+    """An optional table of extra request headers for another provider.
+
+    The key itself stays in the environment: an Authorization header or a
+    key-shaped value is refused here, and never repeated in the message.
+    """
+    value = section.get(key, {})
+    if not isinstance(value, Mapping):
+        raise ConfigError(
+            f"[{name}] {key} must be a table of header = \"value\" pairs"
+        )
+
+    headers: dict[str, str] = {}
+    for header, content in value.items():
+        if not isinstance(header, str) or not header.strip():
+            raise ConfigError(f"[{name}] {key} needs a non-empty header name")
+        if not isinstance(content, str):
+            raise ConfigError(
+                f"[{name}] {key}.{header} must be a string, got {content!r}"
+            )
+        if header.strip().casefold() == "authorization":
+            raise ConfigError(
+                f"[{name}] {key} must not set Authorization; the key comes from "
+                "the environment variable named in key_env"
+            )
+        if llm.looks_like_key(content):
+            raise ConfigError(
+                f"[{name}] {key}.{header} looks like an API key; keys belong in "
+                "the environment variable named in key_env"
+            )
+        headers[header.strip()] = content
+    return headers
+
+
 # --- parsing ----------------------------------------------------------------
 
 
@@ -143,6 +179,7 @@ def settings_from_dict(data: Mapping[str, Any], path: Path | None = None) -> Set
         {
             "base_url", "key_env", "model", "temperature", "timeout_s",
             "max_retries", "wire_format", "input_usd_per_mtok", "output_usd_per_mtok",
+            "extra_headers",
         },
         "llm",
     )
@@ -163,6 +200,7 @@ def settings_from_dict(data: Mapping[str, Any], path: Path | None = None) -> Set
         wire_format=wire_format,
         input_usd_per_mtok=_number(llm_section, "input_usd_per_mtok", 0.0, "llm", 0.0),
         output_usd_per_mtok=_number(llm_section, "output_usd_per_mtok", 0.0, "llm", 0.0),
+        extra_headers=_headers(llm_section, "extra_headers", "llm"),
     )
 
     batch_section = _table(data, "batch")
@@ -226,7 +264,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
 
 
 def build_client(settings: Settings, api_key: str | None = None) -> llm.OpenRouterClient:
-    """Create the OpenRouter client from settings, reading the key from env."""
+    """Create the chat client from settings, reading the key from the environment.
+
+    The API is OpenRouter by default; any OpenAI-compatible endpoint works by
+    changing base_url, key_env and model.
+    """
     if not settings.llm.model:
         raise ConfigError("[llm] model is empty; set a model in config.toml")
     return llm.OpenRouterClient(
@@ -236,4 +278,5 @@ def build_client(settings: Settings, api_key: str | None = None) -> llm.OpenRout
         temperature=settings.llm.temperature,
         timeout_s=settings.llm.timeout_s,
         key_env=settings.llm.key_env,
+        extra_headers=settings.llm.extra_headers,
     )

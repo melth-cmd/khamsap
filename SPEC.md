@@ -122,7 +122,8 @@ Core ideas:
 
 - Python 3.11+ (tomllib is built in, nothing extra to install for config)
 - srt (parsing/composing SRT)
-- openai SDK pointed at https://openrouter.ai/api/v1  (or plain httpx)
+- openai SDK pointed at https://openrouter.ai/api/v1 by default (any OpenAI-compatible
+  base URL works), or plain httpx for a non-compatible API later
 - Optional: charset-normalizer (encoding fallback)
 - pytest for tests
 
@@ -157,6 +158,7 @@ Core ideas:
   wire_format = "tagged"        # or "json"
   input_usd_per_mtok = 0.30     # for --dry-run estimates only
   output_usd_per_mtok = 1.20
+  # extra_headers = { "HTTP-Referer" = "https://..." }  # only if a provider asks
 
   [batch]
   size = 60
@@ -171,7 +173,16 @@ Core ideas:
   [cleanup]
   strip_hi = false              # drop [sound effects] and (descriptions) from the source
 
-API key: OPENROUTER_API_KEY environment variable only. Never in config or cache.
+API key: the environment variable named in [llm] key_env only (OPENROUTER_API_KEY by
+default). Never in config or cache.
+
+Provider: OpenRouter is the default, but the client is the OpenAI SDK, so any
+OpenAI-compatible chat API works by changing [llm] base_url, key_env and model (DeepSeek
+direct, Groq, Together, a local vLLM/Ollama, ...). [llm.extra_headers] is an optional
+table of extra request headers for providers that ask for them; Authorization and
+key-shaped values are refused, because the key comes from the environment. APIs that are
+not OpenAI-compatible (Anthropic messages, Gemini native) are not supported; adapters can
+be added later if a real need appears.
 
 Config loading rules: every setting has a built-in default, so a missing config.toml
 (beside the script) is a warning, not an error; an explicit --config that does not exist

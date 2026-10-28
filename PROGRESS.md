@@ -415,10 +415,27 @@ Phase 5: Extras
      line.
      Known: review costs one call per batch of flagged lines (same max_retries budget);
      its suggestions are not machine-applied, so applying one is a hand edit for now.
- 22. Other providers (different base URL + key env var)
-     Open question first: are they needed? base_url and key_env already come from config
-     and the client is the OpenAI SDK, so an OpenAI-compatible endpoint may already work;
-     the real step may be docs + neutral wording, not a feature. Decide before building.
+ 22. [x] Other providers (different base URL + key env var)
+     Decided with user: support OpenAI-compatible endpoints only (base_url + key_env were
+     already config), no adapters for non-compatible APIs for now. Revisit later to add
+     Anthropic/Gemini/Azure adapters if a real need appears.
+     What was already true: the client is the OpenAI SDK with base_url/key_env from config,
+     and no OpenRouter-specific fields are sent, so e.g. DeepSeek direct, Groq, a local
+     vLLM or Ollama should work by editing config alone.
+     -> llm.py: error texts no longer say "OpenRouter" ("rate limited by the API", "the API
+        rejected the API key (check the variable named in [llm] key_env)", "the API
+        returned HTTP ..."). Added looks_like_key() (used by load_api_key and config);
+        OpenRouterClient takes extra_headers and passes them as OpenAI default_headers.
+        Class name kept: renaming would churn imports for no behaviour.
+     -> config.py: [llm] extra_headers table (string -> string), passed to build_client;
+        refused: a non-table, non-string values, an Authorization header, and any value
+        that looks like an API key (message never echoes it).
+     -> config.toml / SPEC: a short "another provider" example and the provider rules.
+     NOT done, on purpose: no adapter layer, no per-provider settings, no extra live tests.
+     A provider that needs a non-Bearer auth header or a different request body (Anthropic,
+     Gemini native, Azure with api-key + api-version) still needs real work.
+     Tests: 13 new (7 config: default/table/type/authorization/key-shaped/plumbing;
+     6 llm: default_headers, none, looks_like_key cases) = 657 passing.
  23. Saved settings are already covered by config.toml
  24. Easy to understand user manual
  25. Discuss options for GUI
@@ -471,9 +488,9 @@ post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is compl
 cache keys). Phase 4 is complete: item 18 added the checks (verify.py) and item 19 writes
 report.txt after every translating run. Phase 5 has started: item 20 (--fix) and item 21
 (--review suggestions in report.txt) are done. Bilingual output is deferred to the end of
-Phase 5 (item 26) at the user's request. Next is item 22: decide whether other providers
-are needed at all (base_url + key_env already exist), then 23 (settings), 24 (manual),
-25 (GUI discussion).
+Phase 5 (item 26) at the user's request. Item 22 (other providers) is done for
+OpenAI-compatible APIs, with a note to revisit adapters later. Item 23 needs no work
+(settings are config.toml). Next actionable: item 24, the user manual.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -542,10 +559,12 @@ Open threads carried forward
     .srt. review_flagged() runs after the fix pass, so --fix --review fixes first and
     reviews what remains.
   - Bilingual output (English above Thai) is now the last Phase 5 item (26), by request.
-  - Next: item 22, and it starts with a decision, not code: base_url and key_env are
-    already config, and OpenRouterClient is plain OpenAI SDK, so OpenAI-compatible
-    providers may already work. What is left is neutral wording (errors say "OpenRouter"),
-    docs, and support for non-compatible APIs (Anthropic/Gemini/Azure) only if wanted.
+  - Item 22 done for OpenAI-compatible providers: base_url + key_env + model switch the
+    endpoint, extra_headers covers providers that ask for headers, errors are neutral.
+    Open thread: revisit item 22 to add adapters only if an Anthropic/Gemini/Azure key
+    becomes necessary (different body/headers; not worth building speculatively).
+  - Next actionable: item 24, the user manual (23 is already covered by config.toml).
+    Then 25 (GUI discussion) and 26 (bilingual output).
   - The external test file used in Phase 2 has been discarded. The suite is self-contained:
     tests/fixtures/ (simple, bom, windows, malformed, empty, edge_cases) covers every shape.
   - Item 15 decisions, now in SPEC: whole file in ~12k-char parts then one merge call;

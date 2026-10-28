@@ -407,3 +407,46 @@ def test_review_messages_use_the_review_rules():
 def test_current_without_matching_entries_adds_no_section():
     user = llm.build_messages(make_batch(1), current={99: "อื่น"})[1]["content"]
     assert "CURRENT TRANSLATIONS" not in user
+
+
+def test_extra_headers_are_sent_as_default_headers(monkeypatch):
+    import openai
+
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    llm.OpenRouterClient(
+        model="m/x", api_key="test-key", extra_headers={"HTTP-Referer": "https://me.test"}
+    )
+    assert captured["default_headers"] == {"HTTP-Referer": "https://me.test"}
+
+
+def test_no_extra_headers_means_no_default_headers(monkeypatch):
+    import openai
+
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    llm.OpenRouterClient(model="m/x", api_key="test-key")
+    assert captured["default_headers"] is None
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("OPENROUTER_API_KEY", False),
+        ("sk-" + "a" * 30, True),
+        ("sk-or-v1-" + "b" * 30, True),
+        ("Bearer sk-" + "a" * 30, False),
+    ],
+)
+def test_looks_like_key(value, expected):
+    assert llm.looks_like_key(value) is expected
