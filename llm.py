@@ -209,8 +209,21 @@ class ChatClient(Protocol):
     def complete(self, messages: Sequence[dict[str, str]]) -> Completion: ...
 
 
+# Anything shaped like a credential. Used to keep secrets out of error text
+# when someone puts a key where a variable name belongs.
+_SECRET_SHAPED_RE = re.compile(r"^sk-(or-)?[A-Za-z0-9_-]{16,}$")
+
+
 def load_api_key(key_env: str = DEFAULT_KEY_ENV) -> str:
     """Read the API key from the environment. Never logs it."""
+    if _SECRET_SHAPED_RE.match(key_env.strip()):
+        # The user pasted the key into key_env. Say so without repeating it.
+        raise AuthError(
+            "config key_env holds something that looks like an API key.\n"
+            "key_env must be the NAME of the variable, e.g. \"OPENROUTER_API_KEY\".\n"
+            "Put the key itself in your shell environment instead."
+        )
+
     key = os.environ.get(key_env, "").strip()
     if not key:
         raise AuthError(

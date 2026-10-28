@@ -43,6 +43,11 @@ Phase 1: Core translator, command line
       Key comes from the environment only, read via load_api_key() at run time, never logged.
       tests/conftest.py FakeClient + tests/helpers.py; tests/test_llm.py: 31 passing (131 total).
       Live check (costs money, needs the key): pytest -m live  # skipped unless OPENROUTER_API_KEY is set
+      Live smoke test passed with deepseek/deepseek-v4.1-flash-1017: 3 entries, all came back Thai.
+      config.toml key_env holds the variable NAME; a key-shaped value there is rejected without
+      echoing it (this happened once, see llm._SECRET_SHAPED_RE).
+      .githooks/pre-commit blocks staged keys and secret-bearing files; enable per clone with
+      git config core.hooksPath .githooks
  5. Validate by ID; retry only failed entries with backoff and Retry-After
  6. Reassemble with original timestamps; write .th.srt (UTF-8, optional BOM)
  7. API key from env var; model and settings in config.toml

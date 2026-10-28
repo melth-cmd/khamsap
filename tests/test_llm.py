@@ -169,6 +169,14 @@ def test_load_api_key_missing_raises_auth_error(monkeypatch):
     assert "OPENROUTER_API_KEY" in str(excinfo.value)
 
 
+def test_key_pasted_into_key_env_is_rejected_without_echoing_it(monkeypatch):
+    pasted = "sk-or-v1-placeholder-not-a-key"
+    with pytest.raises(llm.AuthError) as excinfo:
+        llm.load_api_key(pasted)
+    assert "sk-or-" not in str(excinfo.value)
+    assert "NAME of the variable" in str(excinfo.value)
+
+
 def test_missing_key_message_never_contains_a_key(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
     with pytest.raises(llm.AuthError) as excinfo:

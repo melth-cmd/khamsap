@@ -1,1 +1,1 @@
-Read SPEC.md and PROGRESS.md first. Do one step at a time. Call existing functions, do not rewrite them. Add tests for every function. Never log or store the API key.
+Read SPEC.md and PROGRESS.md first. Do one step at a time. Call existing functions, do not rewrite them. Add tests for every function. Add checkmark and short note in PROGRESS.md for each completed step. Never log or store the API key. 

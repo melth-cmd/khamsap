@@ -1,0 +1,42 @@
+#!/bin/sh
+# Refuse to commit anything that looks like an API key.
+#
+# Prints file names only, never the matched text, so a leaked key is not copied
+# into terminals, logs or scrollback. Bypass deliberately with:
+#   git commit --no-verify
+#
+# Enable once per clone: git config core.hooksPath .githooks
+
+status=0
+
+report() {
+    echo "pre-commit: $1" >&2
+    shift
+    for file in "$@"; do
+        echo "  $file" >&2
+    done
+    status=1
+}
+
+# 1. Known key shapes: OpenRouter sk-or-v1-..., generic sk-... tokens.
+#    32+ chars so short placeholders like sk-test-123 in tests stay committable.
+if found=$(git grep --cached -l -I -E 'sk-(or-v1-)?[A-Za-z0-9_-]{32,}' -- . 2>/dev/null); then
+    [ -n "$found" ] && report "possible API key in staged files:" $found
+fi
+
+# 2. A secret assigned to a config field instead of an env var name.
+if found=$(git grep --cached -l -I -E '^[[:space:]]*(key_env|api_key|secret|token)[[:space:]]*=[[:space:]]*"[^"]*(sk-|AIza|[0-9a-f]{32})' -- '*.toml' 2>/dev/null); then
+    [ -n "$found" ] && report "config field appears to hold a key, not an env var name:" $found
+fi
+
+# 3. Files that should never be tracked at all.
+found=$(git diff --cached --name-only --diff-filter=ACM | grep -E '(^|/)\.env($|\.)|\.pem$|\.key$|(^|/)id_rsa$')
+[ -n "$found" ] && report "secret-bearing file staged:" $found
+
+if [ "$status" -ne 0 ]; then
+    echo "" >&2
+    echo "Move the key to your shell environment (export OPENROUTER_API_KEY=...) and" >&2
+    echo "unstage the file, then commit again." >&2
+fi
+
+exit "$status"
