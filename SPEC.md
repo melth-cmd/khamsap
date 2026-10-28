@@ -49,11 +49,24 @@ Core ideas:
 
 5. Validate by ID, not just count.
    All IDs present, no extras, none empty, Thai characters present (unless the source
-   is non-verbal like "Mm-hmm" or a music marker).
+   is non-verbal like "Mm-hmm" or a music marker), and formatting placeholders intact.
+
+   Language leaks are caught too: DeepSeek-style models sometimes answer in Chinese.
+   Any Han/Kana/Hangul/Cyrillic in the output that the English source did not already
+   contain is a failure, so a half-Thai half-Chinese line cannot pass. Text that is
+   Han in the source (an on-screen sign) stays allowed. Detecting this in code is the
+   only reliable fix; prompting alone does not stop it, so the prompt says nothing extra.
 
 6. Retry only the bad entries.
    If 58 of 60 are good, keep them and re-request only the 2 failures (max 3 retries,
    exponential backoff with jitter, respect Retry-After on 429, explicit timeout).
+   Retries use temperature 0.1 to make a repeat less likely. One shared budget covers
+   validation failures, 429s and timeouts alike.
+
+   When the budget runs out the entry is left as its original English and flagged with
+   a reason: English is a better failure than the wrong language, because it is visibly
+   wrong and easy to fix by hand. Failed entries are not cached, so a rerun re-requests
+   them. No fallback model.
 
 7. Reading-speed check instead of length-ratio check.
    Using the timestamps, flag entries whose Thai characters-per-second exceed a
@@ -92,7 +105,8 @@ Core ideas:
   srtio.py            read (utf-8-sig, then charset fallback), parse, write
   tags.py             strip/restore formatting tags and placeholders; tag-count check
   batcher.py          split into ~60-entry batches, never mid-entry, add context
-  llm.py              OpenRouter client, backoff, timeout, wire-format encode/decode
+  llm.py              OpenRouter client, timeout, wire-format encode/decode, validation
+  runner.py           translate one batch: validate replies, retry only what failed
   cache.py            JSON cache, per-entry keys, atomic writes
   bible.py            pre-pass: story bible + glossary generation and loading
   glossary.py         load TOML glossary, select entries per batch

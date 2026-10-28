@@ -48,7 +48,16 @@ Phase 1: Core translator, command line
       echoing it (this happened once, see llm._SECRET_SHAPED_RE).
       .githooks/pre-commit blocks staged keys and secret-bearing files; enable per clone with
       git config core.hooksPath .githooks
- 5. Validate by ID; retry only failed entries with backoff and Retry-After
+ 5. [x] Validate by ID; retry only failed entries with backoff and Retry-After
+      -> llm.py: scripts_in / has_thai / is_non_verbal / validate; runner.py: translate_batch
+      Validation: missing, extra (context echoes ignored), empty, missing_thai, foreign_script
+      (Han/Kana/Hangul/Cyrillic the source did not have), tag_mismatch, bad_response.
+      Retry: only failing IDs re-sent, temperature 0.1 after the first call, one shared budget
+      of max_retries=3, exponential backoff 2^attempt +/-25% jitter, Retry-After honoured
+      (capped at 120s), sleep/rand injectable so tests never wait.
+      Exhausted -> EntryResult(ok=False, reason=..., text=original English), never cached.
+      AuthError is fatal and never retried; no fallback model, no extra prompt line.
+      tests/test_runner.py: 24 passing (156 total).
  6. Reassemble with original timestamps; write .th.srt (UTF-8, optional BOM)
  7. API key from env var; model and settings in config.toml
  8. JSON cache saved after each batch (resume on rerun)

@@ -21,13 +21,15 @@ class FakeClient:
     def __init__(self, replies: list | None = None):
         self.replies: list = list(replies or [])
         self.calls: list[list[dict[str, str]]] = []
+        self.temperatures: list[float | None] = []
 
     def queue(self, *replies) -> "FakeClient":
         self.replies.extend(replies)
         return self
 
-    def complete(self, messages) -> Completion:
+    def complete(self, messages, temperature: float | None = None) -> Completion:
         self.calls.append(list(messages))
+        self.temperatures.append(temperature)
         if not self.replies:
             raise AssertionError("FakeClient ran out of queued replies")
         reply = self.replies.pop(0)

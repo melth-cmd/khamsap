@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Mapping, Protocol, Sequence
 
+import tags
 from batcher import Batch, ContextLine, SourceEntry
 
 log = logging.getLogger(__name__)
@@ -65,12 +66,21 @@ class BadResponse(LLMError):
 
 
 @dataclass(frozen=True)
-class DecodeIssue:
-    """A problem found while parsing a reply."""
+class Issue:
+    """A problem found in a reply: parsing, identity or language."""
 
-    kind: str  # "duplicate" | "empty"
+    kind: str
+    # parsing:  "duplicate" | "empty"
+    # identity: "missing" | "extra"
+    # language: "missing_thai" | "foreign_script"
+    # tags:     "tag_mismatch"
+    # other:    "bad_response"
     index: int | None
     message: str
+
+
+# Name kept for the parsing-only case, which reads better at the call site.
+DecodeIssue = Issue
 
 
 @dataclass
@@ -125,6 +135,114 @@ def decode_entries(text: str) -> Decoded:
     if not decoded.entries:
         raise BadResponse("reply contained no [N] tagged lines")
     return decoded
+
+
+# --- language checking ------------------------------------------------------
+
+# Scripts the model might slip into. Thai is the target; the rest are leaks
+# unless the English source already contained them (an on-screen sign, a name).
+_SCRIPT_RANGES: dict[str, tuple[tuple[int, int], ...]] = {
+    "thai": ((0x0E00, 0x0E7F),),
+    "han": ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF)),
+    "kana": ((0x3040, 0x30FF),),
+    "hangul": ((0x1100, 0x11FF), (0xAC00, 0xD7AF)),
+    "cyrillic": ((0x0400, 0x04FF),),
+}
+
+# Words that carry no meaning to translate: "Mm-hmm", "Shh", "Ah.".
+_NON_VERBAL_WORDS = {
+    "mm", "hmm", "hm", "uh", "ah", "oh", "ooh", "shh", "sh", "ha", "hey",
+    "wow", "argh", "ugh", "er", "erm", "eh", "huh", "tsk", "psst", "phew",
+    "ow", "ouch", "mhm", "mmm", "uhh", "ahh", "ohh", "hah", "heh", "huh",
+}
+
+_STRAY_MARKUP_RE = re.compile(r"<[^>]*>|\{\\[^}]*\}|\{[^}]*\}|\[[^\]]*\]|\([^)]*\)|[♪♫♬♩]")
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def scripts_in(text: str) -> set[str]:
+    """Which writing systems appear in `text`."""
+    found: set[str] = set()
+    for character in text:
+        point = ord(character)
+        for name, ranges in _SCRIPT_RANGES.items():
+            if any(low <= point <= high for low, high in ranges):
+                found.add(name)
+                break
+    return found
+
+
+def has_thai(text: str) -> bool:
+    return "thai" in scripts_in(text)
+
+
+def is_non_verbal(text: str) -> bool:
+    """True for text with nothing to translate: interjections, sounds, symbols.
+
+    Deliberately conservative: an uncertain case is treated as verbal, so a
+    real line never slips through untranslated.
+    """
+    stripped = _STRAY_MARKUP_RE.sub(" ", text)
+    words = [word.lower().strip("'") for word in _WORD_RE.findall(stripped)]
+    if not words:
+        return True
+    return all(
+        word in _NON_VERBAL_WORDS or len(set(word)) == 1 or re.fullmatch(r"(?:ha)+|(?:mm)+|(?:h+m+)|(?:a+h+)|(?:o+h+)", word)
+        for word in words
+    )
+
+
+def validate(batch: Batch, decoded: Decoded) -> list[Issue]:
+    """Check a parsed reply against the batch that asked for it.
+
+    Returns every problem found, so the caller can retry exactly the affected
+    entries. An empty list means the reply is safe to ship.
+    """
+    expected = {entry.index: entry.text for entry in batch.items}
+    issues: list[Issue] = list(decoded.issues)
+
+    for index, source in expected.items():
+        if index not in decoded.entries:
+            issues.append(
+                Issue("missing", index, f"entry [{index}] is missing from the reply")
+            )
+            continue
+
+        text = decoded.entries[index]
+        if not text.strip():
+            continue  # decode already reported it as empty
+
+        if not is_non_verbal(source):
+            leaked = scripts_in(text) - scripts_in(source) - {"thai"}
+            if leaked:
+                issues.append(
+                    Issue(
+                        "foreign_script",
+                        index,
+                        f"entry [{index}] contains {'/'.join(sorted(leaked))}: {text[:40]!r}",
+                    )
+                )
+            if not has_thai(text):
+                issues.append(
+                    Issue(
+                        "missing_thai",
+                        index,
+                        f"entry [{index}] has no Thai: {text[:40]!r}",
+                    )
+                )
+
+        for tag_issue in tags.check(source, text):
+            issues.append(
+                Issue("tag_mismatch", index, f"entry [{index}]: {tag_issue.message}")
+            )
+
+    for index in decoded.entries:
+        if index not in expected:
+            issues.append(
+                Issue("extra", index, f"entry [{index}] was not requested")
+            )
+
+    return issues
 
 
 # --- prompt -----------------------------------------------------------------
@@ -206,7 +324,9 @@ class Completion:
 class ChatClient(Protocol):
     """What the rest of the program needs from a model."""
 
-    def complete(self, messages: Sequence[dict[str, str]]) -> Completion: ...
+    def complete(
+        self, messages: Sequence[dict[str, str]], temperature: float | None = None
+    ) -> Completion: ...
 
 
 # Anything shaped like a credential. Used to keep secrets out of error text
@@ -271,14 +391,21 @@ class OpenRouterClient:
             max_retries=0,  # retries are decided by the caller, not the SDK
         )
 
-    def complete(self, messages: Sequence[dict[str, str]]) -> Completion:
+    def complete(
+        self, messages: Sequence[dict[str, str]], temperature: float | None = None
+    ) -> Completion:
+        """Send one completion request.
+
+        `temperature` overrides the client default for this call only, which is
+        how retries are made less random without rebuilding the client.
+        """
         import openai
 
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
                 messages=list(messages),
-                temperature=self.temperature,
+                temperature=self.temperature if temperature is None else temperature,
             )
         except openai.RateLimitError as exc:
             retry_after = _retry_after(exc)
