@@ -450,7 +450,19 @@ Phase 5: Extras
         are config settings (strip_hi works, bilingual is planned item 25 and warns).
         That was a SPEC/code mismatch, found while writing the manual.
      Tests: none (docs only); suite still 657 passing.
- 24. Discuss options for GUI
+ 24. [x] Discuss options for GUI
+     Discussion only, no code, as agreed. Options weighed: Tkinter (+tkinterdnd2),
+     PySide6/Qt 6, GTK4/PyGObject, Gradio/Streamlit, pywebview, Gooey. Recommendation if a
+     UI is ever built: PySide6, one window (native drag-and-drop including Wayland, built-in
+     file dialogs, worker thread + signals for long batches); Tkinter is the lightest but
+     its drag-and-drop is an X11 shim and looks dated; Gradio is the quickest prototype but
+     lives in a browser tab. Effort: ~8-15 focused hours for Tkinter, ~15-25 for a polished
+     Qt/GTK v1, ~2 hours for a bare prototype. Controls map to existing flags
+     (--fix/--review/--bible-only/--dry-run; output folder needs a small addition next to
+     --output). "Build bible" is a mode, not a checkbox beside Fix/Review. Prep work when
+     the time comes: extract a service.py from translate.py so CLI and GUI share pre-flight,
+     notes, translation and report; add an output-folder option and, if wanted, a cancel
+     event. Revisit later: no GUI is being built now.
  25. Bilingual output option (English line above Thai)
      Moved to the bottom at the user's request: both languages in one subtitle is a
      viewing preference, not needed yet. config [output] bilingual exists and warns that it
@@ -506,8 +518,9 @@ Phase 5 (now item 25) at the user's request and is parked for later. Item 22 (ot
 providers) is done for OpenAI-compatible APIs, with a note to revisit adapters later. The
 old "saved settings" item was removed: config.toml already holds every setting worth
 saving, and the few constants left (retry backoff, bible chunking, advisory length limits)
-are deliberately not user settings. Item 23 (the user manual, README.md) is done. Next is
-item 24: discuss GUI options (the design still says GUI dropped, optional, probably never).
+are deliberately not user settings. Item 23 (the user manual, README.md) is done, and item
+24 (GUI) is a finished discussion: no UI now, PySide6 if it is ever built. Only item 25
+(bilingual output) is left in Phase 5, and it is parked.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -589,8 +602,9 @@ Open threads carried forward
     file); README gained a short Development section. Ignored caches were deleted once
     (__pycache__, tests/__pycache__, .pytest_cache, two fixture .cache.json artefacts from
     old runs); they come back on the next run or pytest, which is normal.
-  - Next: item 24, the GUI discussion (nothing to build unless the user asks; SPEC still
-    says GUI dropped / probably never). Then item 25, bilingual output, parked for later.
+  - Item 24 done as a discussion: no GUI now; if one is built later, PySide6 single window
+    is the recommendation and service.py is the prep work (see the item note above).
+    Item 25 (bilingual output) stays parked for later.
   - Settings audit (old item 23, removed): everything worth saving is already in
     config.toml ([llm], [batch], [output], [cleanup]). Left as code constants on purpose:
     retry backoff/jitter/temperature and the Retry-After cap (runner.py), bible chunk
