@@ -1,0 +1,32 @@
+# Settings for the Thai subtitle translator.
+# The API key is NEVER stored here: set OPENROUTER_API_KEY in your environment.
+
+[llm]
+base_url = "https://openrouter.ai/api/v1"
+key_env = "OPENROUTER_API_KEY"   # change when adding another provider
+model = "deepseek/deepseek-v4.1-flash-1017"
+temperature = 0.25
+timeout_s = 120
+max_retries = 3
+wire_format = "tagged"           # or "json"
+
+# USD per million tokens, used only for --dry-run cost estimates.
+# OpenRouter list price for the model above; update if you change models.
+input_usd_per_mtok = 0.30
+output_usd_per_mtok = 1.20
+
+[batch]
+size = 60
+context_before = 4
+context_after = 2
+
+[output]
+encoding = "utf-8"               # "utf-8-sig" if your player garbles Thai
+bilingual = false                # English line above Thai
+strip_en_suffix = true           # Movie.en.srt -> Movie.th.srt
+
+[cleanup]
+strip_hi = false                 # drop [sound effects] and (descriptions)
+
+[verify]
+max_cps = 17                     # Thai characters per second, tune by feel

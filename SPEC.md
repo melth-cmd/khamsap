@@ -103,11 +103,15 @@ Core ideas:
 ### CONFIG (config.toml sketch)
 
   [llm]
-  model = "..."
+  base_url = "https://openrouter.ai/api/v1"
+  key_env = "OPENROUTER_API_KEY" # change for other providers
+  model = "..."                 # e.g. deepseek/deepseek-v4.1-flash-1017
   temperature = 0.25
   timeout_s = 120
   max_retries = 3
   wire_format = "tagged"        # or "json"
+  input_usd_per_mtok = 0.30     # for --dry-run estimates only
+  output_usd_per_mtok = 1.20
 
   [batch]
   size = 60
