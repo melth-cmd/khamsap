@@ -47,9 +47,79 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show batches, tokens and estimated cost without calling the API",
     )
     parser.add_argument(
+        "--force", action="store_true",
+        help="Also accept inputs that look like existing translations (*.th.srt)",
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show per-batch progress"
     )
     return parser
+
+
+def planned_output(
+    source: Path, settings: config_module.Settings, output: Path | None = None
+) -> Path:
+    """Where translating `source` would be written."""
+    return output or srtio.output_path_for(
+        source, strip_en_suffix=settings.output.strip_en_suffix
+    )
+
+
+def looks_translated(path: Path) -> bool:
+    """True for names this program would produce: Movie.th.srt, Movie.en.th.srt."""
+    return path.suffix.lower() == ".srt" and path.stem.lower().endswith(".th")
+
+
+def check_inputs(
+    files: list[str],
+    settings: config_module.Settings,
+    output: Path | None = None,
+    force: bool = False,
+) -> list[str]:
+    """Every reason the file list cannot be translated, checked before any call.
+
+    One batch run is a single instruction, so it is all or nothing: reporting a
+    collision after three files were translated has already overwritten one.
+    """
+    problems: list[str] = []
+    seen: dict[Path, Path] = {}
+    targets: dict[Path, Path] = {}
+
+    for name in files:
+        source = Path(name)
+        if not source.exists():
+            problems.append(f"{source} not found")
+            continue
+        if not source.is_file():
+            problems.append(f"{source} is not a file")
+            continue
+
+        resolved = source.resolve()
+        if resolved in seen:
+            problems.append(f"{source} is given more than once")
+            continue
+        seen[resolved] = source
+
+        if not force and looks_translated(source):
+            problems.append(
+                f"{source} looks like an existing translation (name ends in .th); "
+                "use --force to translate it anyway"
+            )
+
+        target = planned_output(source, settings, output)
+        key = target.resolve()
+        if key == resolved:
+            problems.append(f"{source} would be overwritten by its own output")
+            continue
+        if key in targets:
+            problems.append(
+                f"{source} and {targets[key]} would both write {target.name}; "
+                "translate them one at a time"
+            )
+            continue
+        targets[key] = source
+
+    return problems
 
 
 def translate_one(
@@ -61,9 +131,7 @@ def translate_one(
     range_: str | None = None,
 ) -> tuple[pipeline.TranslatedFile, Path]:
     """Translate a single file using the configured settings."""
-    target = output or srtio.output_path_for(
-        source, strip_en_suffix=settings.output.strip_en_suffix
-    )
+    target = planned_output(source, settings, output)
     return pipeline.translate_file(
         client,
         source,
@@ -154,12 +222,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
 
+    output = Path(args.output) if args.output else None
+    problems = check_inputs(args.files, settings, output, force=args.force)
+    if problems:
+        for problem in problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 2
+
     if args.dry_run:
         return _dry_run(args, settings)
 
     if settings.output.bilingual:
         print("warning: bilingual output is not implemented yet; writing Thai only",
               file=sys.stderr)
+
+    sources = [Path(name) for name in args.files]
+    if len(sources) > 1 and (args.limit is not None or args.range_ is not None):
+        print("warning: --limit/--range apply to every file given", file=sys.stderr)
 
     try:
         client = config_module.build_client(settings)
@@ -168,25 +247,32 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     status = 0
-    for name in args.files:
-        source = Path(name)
-        if not source.exists():
-            print(f"error: {source} not found", file=sys.stderr)
-            status = 2
-            continue
+    failed_files = 0
+    entries = 0
+    tokens = 0
+    leftover = 0
+
+    for number, source in enumerate(sources, 1):
+        if len(sources) > 1:
+            print(f"[{number}/{len(sources)}] {source.name}", file=sys.stderr)
         try:
             result, target = translate_one(
                 client,
                 source,
                 settings,
-                Path(args.output) if args.output else None,
+                output,
                 limit=args.limit,
                 range_=args.range_,
             )
         except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
             print(f"error: {source.name}: {exc}", file=sys.stderr)
             status = 1
+            failed_files += 1
             continue
+
+        entries += len(result.subtitles)
+        tokens += result.usage.prompt_tokens + result.usage.completion_tokens
+        leftover += len(result.failures)
 
         print(_summary(source, target, result))
         if result.failures:
@@ -197,7 +283,21 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
+    if len(sources) > 1:
+        print(_total(len(sources), failed_files, entries, leftover, tokens))
     return status
+
+
+def _total(files: int, failed: int, entries: int, leftover: int, tokens: int) -> str:
+    """One line for the whole run, so 20 files do not hide the totals."""
+    parts = [f"{files} files", f"{files - failed} translated"]
+    if failed:
+        parts.append(f"{failed} FAILED")
+    parts.append(f"{entries} {'entry' if entries == 1 else 'entries'}")
+    if leftover:
+        parts.append(f"{leftover} left in English")
+    parts.append(f"{tokens:,} tokens")
+    return "total: " + "  ".join(parts)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -143,6 +143,157 @@ def test_verbose_flag_logs_batches(project, fake, caplog):
     )
 
 
+# --- multi-file batch processing (step 14) -----------------------------------
+
+
+def copy(project: Path, name: str) -> Path:
+    shutil.copy(FIXTURES / "simple.srt", project / name)
+    return project / name
+
+
+def run(project, fake, *args) -> int:
+    return translate.main([*map(str, args), "--config", str(project / "config.toml")])
+
+
+def test_colliding_outputs_are_refused_before_any_call(project, fake, capsys):
+    status = run(project, fake, copy(project, "movie.en.srt"), copy(project, "movie.srt"))
+    err = capsys.readouterr().err
+    assert status == 2
+    assert "would both write movie.th.srt" in err
+    assert fake.call_count == 0
+    assert not (project / "movie.th.srt").exists()
+
+
+def test_duplicate_input_is_refused(project, fake, capsys):
+    source = copy(project, "sample.en.srt")
+    status = run(project, fake, source, source)
+    assert status == 2
+    assert "given more than once" in capsys.readouterr().err
+    assert fake.call_count == 0
+
+
+def test_duplicate_detected_through_a_symlink(project, fake, capsys):
+    source = copy(project, "sample.en.srt")
+    alias = project / "alias.en.srt"
+    alias.symlink_to(source)
+    status = run(project, fake, source, alias)
+    assert status == 2
+    assert "given more than once" in capsys.readouterr().err
+
+
+def test_existing_translation_is_refused(project, fake, capsys):
+    already = copy(project, "done.th.srt")
+    status = run(project, fake, already)
+    err = capsys.readouterr().err
+    assert status == 2
+    assert "looks like an existing translation" in err
+    assert "--force" in err
+    assert fake.call_count == 0
+
+
+def test_force_accepts_an_existing_translation(project, fake):
+    already = copy(project, "done.th.srt")
+    fake.queue(REPLIES)
+    status = translate.main(
+        [str(already), "--force", "--config", str(project / "config.toml")]
+    )
+    assert status == 0
+    assert fake.call_count == 1
+    assert (project / "done.th.th.srt").exists()
+
+
+def test_a_directory_is_not_an_input_file(project, fake, capsys):
+    folder = project / "subs"
+    folder.mkdir()
+    status = run(project, fake, folder)
+    assert status == 2
+    assert "is not a file" in capsys.readouterr().err
+
+
+def test_every_problem_is_reported_at_once(project, fake, capsys):
+    folder = project / "subs"
+    folder.mkdir()
+    status = run(project, fake, folder, project / "ghost.srt", copy(project, "done.th.srt"))
+    err = capsys.readouterr().err
+    assert status == 2
+    assert "is not a file" in err
+    assert "not found" in err
+    assert "looks like an existing translation" in err
+
+
+def test_one_bad_file_aborts_the_whole_run(project, fake):
+    fake.queue(REPLIES)
+    status = run(project, fake, copy(project, "sample.en.srt"), project / "ghost.srt")
+    assert status == 2
+    assert fake.call_count == 0
+    assert not (project / "sample.th.srt").exists()
+
+
+def test_output_flag_may_not_overwrite_its_input(project, fake, capsys):
+    source = copy(project, "sample.en.srt")
+    status = translate.main(
+        [str(source), "--output", str(source), "--config", str(project / "config.toml")]
+    )
+    assert status == 2
+    assert "overwritten by its own output" in capsys.readouterr().err
+
+
+def test_dry_run_checks_the_inputs_too(project, fake, capsys):
+    status = translate.main(
+        [str(copy(project, "done.th.srt")), "--dry-run", "--config", str(project / "config.toml")]
+    )
+    assert status == 2
+    assert "looks like an existing translation" in capsys.readouterr().err
+
+
+def test_multiple_files_get_progress_headers_and_a_total(project, fake, capsys):
+    fake.queue(REPLIES).queue(REPLIES)
+    status = run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"))
+    captured = capsys.readouterr()
+
+    assert status == 0
+    assert "[1/2] a.en.srt" in captured.err
+    assert "[2/2] b.en.srt" in captured.err
+    assert "total: 2 files  2 translated  6 entries  0 tokens" in captured.out
+
+
+def test_single_file_gets_no_header_or_total(project, fake, capsys):
+    fake.queue(REPLIES)
+    run(project, fake, copy(project, "sample.en.srt"))
+    captured = capsys.readouterr()
+    assert "[1/1]" not in captured.err
+    assert "total:" not in captured.out
+
+
+def test_a_crashed_file_does_not_stop_the_rest(project, fake, capsys):
+    import llm
+
+    fake.queue(llm.LLMError("gateway exploded")).queue(REPLIES)
+    status = run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"))
+    captured = capsys.readouterr()
+
+    assert status == 1
+    assert "a.en.srt: gateway exploded" in captured.err
+    assert (project / "b.th.srt").exists()
+    assert "1 FAILED" in captured.out
+
+
+def test_leftover_english_does_not_change_the_exit_status(project, fake, capsys):
+    fake.queue("[1] สวัสดี\n[2] 你好\n[3] {0}สบายดี{1}")
+    for _ in range(3):
+        fake.queue("[2] 你好")  # entry 2 never recovers
+    fake.queue(REPLIES).queue(REPLIES)  # the retry loop and the second file
+    status = run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"))
+    assert status == 0
+    assert "total: 2 files  2 translated  6 entries  1 left in English  0 tokens" in capsys.readouterr().out
+
+
+def test_limit_with_several_files_warns(project, fake, capsys):
+    fake.queue("[1] สวัสดี").queue("[1] สวัสดี")
+    run(project, fake, copy(project, "a.en.srt"), copy(project, "b.en.srt"), "--limit", "1")
+    assert "--limit/--range apply to every file" in capsys.readouterr().err
+
+
 # --- context (step 9) -------------------------------------------------------
 
 

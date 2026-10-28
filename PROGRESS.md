@@ -175,7 +175,22 @@ Phase 2: Reliability polish
       tests: 14 new in test_layout.py, 5 in test_pipeline.py, plus fixtures/edge_cases.srt
       (dash turn, dash behind <i>, mixed, music, sign) run end to end (333 total).
       Not done: no chars-per-line limit; extra lines still only reported.
- 14. Multi-file batch processing
+ 14. [x] Multi-file batch processing
+      The loop already existed (one client, per-file try/except, continue on error). This step
+      made it safe to point at a glob.
+      -> translate.py: check_inputs() runs BEFORE the client is built or any call is made, and
+         aborts the whole run on: missing file, directory, same file given twice (symlinks
+         resolved), two inputs that would write the same .th.srt (Movie.en.srt + Movie.srt),
+         --output that would overwrite its own input, and inputs that look translated
+         (*.th.srt; "python translate.py *.srt" would otherwise translate Thai into Thai).
+         All problems are listed at once. --force accepts the last kind only.
+      Progress header "[2/5] name.en.srt" on stderr when several files are given; per-file
+      summary lines unchanged; a "total:" line at the end (files, translated, FAILED,
+      entries, left in English, tokens). Single-file output is byte-for-byte the same as
+      before (no header, no total). --limit/--range with several files warns.
+      Exit status: 0 clean or entries left in English (unchanged rule, agreed), 1 when a file
+      crashed, 2 for any pre-flight/config/usage problem.
+      tests/test_translate.py: 15 new (348 total).
 
 Phase 3: Story bible and glossary
  15. Pre-pass producing bible.md and glossary.toml
@@ -216,7 +231,7 @@ Phase 5: Extras
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
-post-phase line-break work). Phase 2: items 11-13 done, next is item 14 (multi-file batch processing).
+post-phase line-break work). Phase 2 is complete (items 11-14). Next is Phase 3, item 15: story bible + glossary pre-pass.
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -239,7 +254,7 @@ Modules (one line each)
   layout     rewrap translated text to the source line count (dash / proportional)
   pipeline   prepare -> batch -> translate -> restore -> rebuild -> write
   config     config.toml loading/validation, build_client
-  translate  argparse CLI
+  translate  argparse CLI, multi-file pre-flight and run summary
 
 Open threads carried into Phase 2
   - Item 11 done: the cache already takes a `glossary` callable. Phase 3 (item 15/17) only

@@ -266,8 +266,19 @@ proposes corrections (written to the report, applied only with --fix).
 ### CLI
 
   python translate.py input.en.srt            -> input.th.srt
-  python translate.py *.srt                   multiple files (simple loop)
+  python translate.py *.en.srt                several files in one run: one client, one
+                                              progress header per file, per-file summary and
+                                              a total at the end. A file that crashes is
+                                              reported and the rest still run (exit 1).
+                                              The whole list is checked before any API call;
+                                              any problem aborts the run (exit 2) rather than
+                                              translating half of it: missing files,
+                                              directories, the same file twice, two inputs
+                                              writing the same .th.srt, and inputs that
+                                              already look translated (*.th.srt).
+  --force                                     accept *.th.srt inputs anyway
   --limit N / --range A-B                     translate only part of the file (dev/testing).
+                                              With several files it applies to every one.
                                               --range uses real SRT indexes, inclusive. The output
                                               file holds only the selected entries; context is
                                               still read from the whole file. Not merged into a
