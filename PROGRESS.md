@@ -121,7 +121,18 @@ Phase 1: Core translator, command line
  Test on a tiny sample first.
 
 Phase 2: Reliability polish
- 11. Per-entry cache keys (source + model + prompt version + glossary)
+ 11. [x] Per-entry cache keys (source + model + prompt version + glossary)
+      -> cache.py: entry_key(source, model, prompt_version, glossary) -> sha256, 32 hex chars.
+         Cache(path, model, prompt_version, glossary=callable(index, source) -> fingerprint);
+         the callable defaults to no_glossary (""), so it is the Phase 3 plug-in point.
+         Stored per entry as {key, source, text}; key_for() is what get/put/load compare against.
+      No more whole-file gate: the header still records model/prompt for humans, but a key
+      mismatch is just a miss, logged as "N cached entries are stale". Editing one glossary
+      term drops only the lines whose fingerprint changed; switching back to an older model
+      hits its old entries again. Index is NOT in the key, so a line keeping its text can move.
+      FORMAT_VERSION 2. Version 1 caches are ignored and start empty (agreed with user: the
+      existing translations were test artefacts, no migration written).
+      tests/test_cache.py: 23 passing (288 total).
  12. Rate-limit handling: jitter, Retry-After, timeouts
  13. Multi-line subtitles, speaker dashes, sound-effect brackets edge cases
  14. Multi-file batch processing
@@ -165,7 +176,7 @@ Phase 5: Extras
 ### DEV NOTES (for a fresh session)
 
 Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
-post-phase line-break work). Phase 2 starts at item 11.
+post-phase line-break work). Phase 2: item 11 done, next is item 12 (rate limits/timeouts).
 
 Environment
   - Python 3.12 venv in .venv        (uv python install 3.12; uv venv --python 3.12 .venv)
@@ -191,9 +202,12 @@ Modules (one line each)
   translate  argparse CLI
 
 Open threads carried into Phase 2
-  - Item 11 must fold the glossary into cache keys. PROMPT_VERSION is still 1 and was
-    deliberately NOT bumped for the line-break prompt rule: old entries are repaired on
-    read by layout.py, so bumping would have thrown away every cache for a layout fix.
+  - Item 11 done: the cache already takes a `glossary` callable. Phase 3 (item 15/17) only
+    has to build glossary.py and pass it in wherever Cache(...) is built (pipeline.translate_file
+    builds it today; translate_file has no pass-through parameter yet).
+  - PROMPT_VERSION is still 1 and was deliberately NOT bumped for the line-break prompt rule:
+    old entries are repaired on read by layout.py, so bumping would have thrown away every
+    cache for a layout fix.
   - No max chars-per-line rule exists. layout.py splits at the source's break points only.
   - report.txt is not written yet (item 19). Failures and rewraps live in
     EntryResult.reason / .rewrapped and TranslatedFile.failures / .rewrapped.
