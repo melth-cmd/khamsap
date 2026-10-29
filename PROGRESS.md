@@ -508,12 +508,13 @@ Phase 5: Extras
   tests/test_llm.py (the "pasted into key_env" test). The real key is 73 chars, lives in
   .env only, is not in any tracked file, and does not share that prefix. .env is untracked.
 
-### KNOWN BUGS (from the PEN15 live test)
+### KNOWN BUGS (from the PEN15 live tests)
 
 Live test, plain README command on PEN15 (2019) S01E01 - 720p.en.hi.srt (535 entries, no
 bible or glossary): exit 0, 11m45s, 74,728 tokens, ~$0.05 on the OpenRouter dashboard,
 535/535 entries, timestamps and indexes intact, 19 flagged (1 failed, 18 english_left).
-The user judged the Thai good. The five bugs below, in the order they matter.
+The user judged the Thai good. The five bugs below (1-5) come from that run; 6-8 came from
+the S02E07-E12 run and 9-10 from the South Park film. Listed in the order they matter.
 
 1. Mid-word line splits (layout.py). When the model merges a multi-line entry and the Thai
    has no space near the proportional split point, layout.py falls back to a character
@@ -521,6 +522,16 @@ The user judged the Thai good. The five bugs below, in the order they matter.
    [292] เป็|น, [293] เ|ธอ). Suggestion: never split at a character; if no acceptable
    space is within a margin of the target, leave the entry merged and report it as not
    repaired. Add these four real cases to test_layout.py first, so the rule is measurable.
+   Seen again on a whole film (South Park, 2026-10-29): 1521 entries, 118 layout repairs,
+   of which 46 were proportional splits where the Thai had no space at the cut (the
+   character-offset fallback), and 36 of those 46 cut inside a word: กํา|ลัง, ดูถ|ูกผม,
+   เทอร์แร|นซ์, อย|ู่, ท|ี่, หีไ|ดโนเสาร์. So about one repair in three is broken, and it
+   only triggers when the Thai has no spaces, which is the normal case, so this is the
+   common path and not a corner. All 36 were fixed by hand (break moved to a word
+   boundary; cache edited, .th.srt regenerated for 0 tokens). A cheap regression check
+   for test_layout.py: after a repair no line may begin with a combining mark
+   (ั ิ ี ึ ื ุ ู ็ ์ ่ ้ ๊ ๋) and no line may end with เ แ โ ใ ไ or ็. The damaged file had
+   19 such lines; the corrected one has 0.
 
 2. english_left noise when there is no glossary. 18 of the 19 flags were proper nouns and
    brands the model rightly kept (UGIS x12, AOL, Care Bear, Ace Ventura, M.A.C, DD,
@@ -549,6 +560,122 @@ The user judged the Thai good. The five bugs below, in the order they matter.
    one-line "batch n/m" progress to stderr for real runs (keep -v for the detail), or at
    least a "translating 535 entries in 9 batches..." line at the start. Mention the choice
    in the README first-run section.
+
+6. Three-line cues. A two-line source cue came out as three lines: E12 [427] "Oh, my God." +
+   "‐ What? Stop. Stop." -> "‐ แม่เหรอ / โอ้พระเจ้า / ‐ อะไร หยุด หยุด", reported as
+   line_count (2 in source, 3 in translation) and as "1 entry with extra lines" in the
+   layout repairs line. Only 1 case in E12's 667 entries, but a 3-line cue overflows the
+   safe area in most players, so it is visible corruption like bug 1. The user wants this
+   fixed, in one of two places (pick one): before translation, by telling the model the
+   line count is fixed and retrying a 3-line answer; or after translation, in layout.py, by
+   merging or re-splitting back down to 2 lines. Prefer the layout.py repair: it is
+   deterministic and costs no retry. Start by adding the real [427] case to test_layout.py.
+
+7. Speaker labels: keep them or remove them? (User decision, still open.) Across S02E07-E12
+   the "NAME:" prefixes are the overwhelming majority of english_left flags: 87 of 96
+   blocks in E07, 64/76 in E08, 51/79 in E10, 29/51 in E09, 26/30 in E12, 3/4 in E11 - so a
+   clean file looks like ~90 mistakes, the same noise as bug 2. Today the model keeps the
+   Latin name and translates the line ("MAYA: Taking a nap!" -> "MAYA: งีบอยู่!"), and the
+   validator then demands Thai for "MAYA". The user wants to revisit whether labels stay at
+   all. If kept: teach verify.py/report that a leading "NAME:" is expected (reuse the
+   keep-list or the capitalised-word quiet rule from bug 2) instead of flagging it. If
+   removed: strip "NAME:" in a pre- or post-pass, say so in the prompt, the README and the
+   report. Whichever way it goes, the choice needs a test and must not touch a cue whose
+   only content is the label.
+
+8. Proper nouns: keep English or transliterate? (Policy decision, still open.) Today the model
+   keeps Latin script for anything it recognises and the validator flags it, so the same class
+   of term is treated inconsistently run to run and the glossary is the only thing that ever
+   decides it. Seen in S02E06-E12, grouped by the decision each group needs:
+   - Brands, ordinary products: Stop and Shop, Canada Dry, Swarovski, Chanel, Claire's,
+     Payless, Dippin' Dots, JBL, AIM, DDR. Some have a settled Thai spelling (ชาแนล,
+     สวารอฟสกี้), most do not.
+   - Titles of other works, which often have an official Thai title of their own:
+     "Final Destination" -> ปลายทางมรณะ (E06 [175]), "Seven Nights in Japan" (E11 [280]),
+     the song "Demirep" by Bikini Kill (E12 [12]). A literal transliteration here is worse
+     than useless because viewers know the Thai title, not the English sound.
+   - Acronyms and model numbers: AIM, DDR, ADD, JBL, K9, UGIS (bug 2), 21L4, Model 3B,
+     "'63", and the bare letters from "grade A" (E06) and "K9"/"21L4" (E08). These should stay
+     as they are; the flags on the bare letters are bug 2/3 noise, not a real choice.
+   - Names spoken in dialogue, not labels: Ume, "Oomi", Hector, Sooji, Shuji, Maya, Anna,
+     Karen, Becca, Lola, Yolanda (E09, E10). These came back in Latin script while the E01
+     glossary says names are action = "transliterate" (Anna -> แอนนา), so the default and the
+     glossary disagree. E10 also has the joke Anna mishearing Ume as "Oomi", so a blanket
+     rule has to keep the two distinguishable (e.g. อุเมะ against อูมิ), and quoted
+     pronunciations need their quotes kept.
+   Decision needed: one default per group above, not one global rule, and it should live in
+   the glossary actions that already exist (keep / transliterate / translate) so the bible
+   pass fills it in and a hand edit still wins. The tool should not guess an official Thai
+   title. Suggested starting point: brands keep unless the bible knows a Thai spelling,
+   titles keep English (translating an official title from memory risks being wrong), acronyms
+   and model numbers keep, in-dialogue names transliterate to match the glossary. Whichever
+   way each group goes, verify.py has to know the answer or the report keeps flagging the
+   choice as a mistake, and each group needs a test.
+
+9. A nonsense line, reported as if it were a deliberate keep. South Park [841]
+   "Bullshit." came back as "ทwerp!" - a Thai ท glued to a Latin fragment, meaningless.
+   Correction to what was first assumed: the checker DOES catch Latin attached to Thai.
+   _ENGLISH_WORD_RE has no word boundary, so it matches "werp" inside "ทwerp" and
+   leftover_english() returns the flag (checked directly, not inferred). The gap is what
+   the flag says and what happens next: it reads `english_left: werp`, which looks exactly
+   like the 36 deliberate keeps in the same file (USO, V-chip, Windows, forensics), and
+   english_left is advisory, so nothing is retried and the junk ships. Suggestion: add a
+   distinct `mixed_script` check for Latin letters immediately next to Thai (never valid
+   for this project), raise it as a failure so the entry is retried like missing_thai, and
+   leave english_left for words separated by a space or punctuation. Test with the real
+   [841] string.
+
+10. A cue can inherit a line from the cue above (context bleed). Twice in the same film:
+   [1405] began with a copy of [1404]'s "เพื่อน กูเจอคลิตอริสแล้ว", giving three lines
+   for a two-line source, and [169] likewise opened with the previous refrain line. Both
+   were fixed by hand. Suggestion: add an advisory check that a translation's first line
+   is not identical to the previous entry's translation, and treat "more lines than the
+   source" (already flagged as line_count) as a failure worth one retry rather than an
+   advisory, since the extra line is nearly always bleed.
+
+### TO-DO (ideas, not scheduled)
+
+1. Concurrent batch requests. (User idea, 2026-10-29.) Today
+   pipeline.translate_subtitles sends one request at a time in a plain
+   `for number in range(1, batch_count + 1)` loop, so wall time is batches x
+   (one request). A PEN15 episode (10-15 batches) takes roughly 5-10 minutes and
+   the South Park movie (1521 entries, 26 batches) longer still; sending N
+   batches at once to OpenRouter could bring that to 2-5 minutes.
+   - What the OpenRouter docs say (checked 2026-10-29): paid models have no
+     platform-wide requests-per-minute cap; the 20 rpm / 50-1000 per day figures
+     apply to ":free" variants only. Most 429s are inherited from the upstream
+     provider, which enforces its own rpm and tokens-per-minute per model, and
+     a 429 may carry X-RateLimit-Limit / -Remaining / -Reset, or Retry-After
+     when every provider it tried sent a hint (llm.py already raises
+     RateLimited from a 429 and _retry_after() reads Retry-After).
+     The likelier ceiling for this project is the *in-flight spending budget*:
+     OpenRouter reserves an estimate for each running request (input tokens plus
+     the completion tokens allowed by max_tokens, or a fixed per-request cap when
+     max_tokens is unset, which is our case), so N concurrent batches reserve N
+     caps at once and a low-balance key gets a 402 with
+     error.metadata.limit_source = openrouter_in_flight_budget instead of a 429.
+     Concurrency therefore has to be conservative by default (start at 4), and a
+     402 must stop the run and report the reason, not be retried as a rate limit.
+   - Hard part is context, not the network. The loop rebuilds each batch with
+     `translated=` so context_before shows the Thai produced by earlier batches.
+     Concurrent batches cannot see that, so either (a) snapshot the context
+     before dispatching (source English, or cached Thai for a resume; keeps the
+     run deterministic and costs nothing extra), or (b) add a second pass that
+     re-sends only entries the earlier batch affected (costs money, so only if
+     (a) measurably hurts). Start with (a).
+   - Also to handle: a shared limiter plus one backoff so five threads do not
+     hammer a 429ing endpoint; save the cache as each batch lands so an
+     interrupt loses only the in-flight batches; tolerate out-of-order
+     completions in the log and the "batch n/m" progress line; keep token and
+     cost accounting summing the way it does now; make --fix and --review go
+     through the same path. The same prompts are sent either way, so cost and
+     the --dry-run estimate do not change, only wall time.
+   - Config: a [batch] setting (e.g. concurrency, default 1) so the old
+     sequential behaviour stays the default until the rate limit is known.
+   - Tests: a fake client that records the peak number of calls in flight
+     (assert it equals the setting, and 1 by default); results identical to a
+     sequential run at concurrency 1; one failed batch does not cancel the
+     others; the cache file is complete after each batch completes.
 
 ### DEV NOTES (for a fresh session)
 
