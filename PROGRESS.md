@@ -1,3 +1,5 @@
+Project: KhamSap - "Thai subtitles with a memory". Repo directory: khamsap.
+
 ### BUILD ORDER
 
 (Each phase must work, and have passing tests, before starting the next.)

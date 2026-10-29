@@ -1,4 +1,6 @@
-# Thai subtitle translator
+# KhamSap
+
+*Thai subtitles with a memory.*
 
 A small command-line tool that turns English `.srt` subtitles into Thai with an
 AI model (OpenRouter by default).
@@ -12,7 +14,7 @@ AI model (OpenRouter by default).
 
 You need Python 3.11 or newer.
 
-    cd thaiSRTprogram
+    cd khamsap
     uv venv --python 3.12 .venv
     uv pip install -r requirements.txt
     source .venv/bin/activate
