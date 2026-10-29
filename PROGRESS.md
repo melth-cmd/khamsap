@@ -550,7 +550,7 @@ The user judged the Thai good. The five bugs below, in the order they matter.
 
 ### DEV NOTES (for a fresh session)
 
-Read AGENT.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
+Read AGENTS.md, then SPEC.md, then this file. Phase 1 is complete (items 1-10 plus the
 post-phase line-break work). Phase 2 is complete (items 11-14). Phase 3 is complete
 (item 15 pre-pass, item 16 reload the files each run, item 17 per-batch glossary +
 cache keys). Phase 4 is complete: item 18 added the checks (verify.py) and item 19 writes

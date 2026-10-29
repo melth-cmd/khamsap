@@ -13,4 +13,7 @@ venv/
 *.th.srt
 *.report.txt
 
+# Local subtitles to try out, and everything the tool writes next to them
+subs/
+
 # Keep *.bible.md and *.glossary.toml tracked: they are hand-edited.
