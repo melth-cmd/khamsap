@@ -1,6 +1,7 @@
 # KhamSub
 
-*Thai subtitles with a memory.*
+Thai subtitles for some movies and shows are very hard to find and in a lot of
+cases don't exist at all. This tool aims to make that a thing of the past.
 
 A small command-line tool that turns English `.srt` subtitles into Thai with an
 AI model (OpenRouter by default).

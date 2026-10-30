@@ -8,12 +8,19 @@ venv/
 # Secrets
 .env
 
-# Tool output (regenerated, not source)
-*.cache.json
+# Subtitles and tool output, local to each machine (never source)
+*.en.srt
 *.th.srt
+*.cache.json
 *.report.txt
+*.bible.md
+*.glossary.md
+*.glossary.toml
 
 # Local subtitles to try out, and everything the tool writes next to them
 subs/
 
-# Keep *.bible.md and *.glossary.toml tracked: they are hand-edited.
+# Local notes and agent instructions, kept out of the repo
+AGENTS.md
+PROGRESS.md
+SPEC.md
