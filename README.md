@@ -12,18 +12,12 @@ AI model (OpenRouter by default).
 
 ## Install
 
-You need Python 3.11 or newer.
+Requires Python 3.11+.
 
+    git clone https://github.com/melth-cmd/khamsub.git
     cd khamsub
-    uv venv --python 3.12 .venv
-    uv pip install -r requirements.txt
-    source .venv/bin/activate
-
-If you do not use `uv`:
-
-    python -m venv .venv
-    .venv/bin/pip install -r requirements.txt
-    source .venv/bin/activate
+    python -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt
 
 Get an API key from openrouter.ai and export it. The key is read from the
 environment only; it is never written to config or to the cache.
