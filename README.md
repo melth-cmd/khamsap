@@ -1,4 +1,4 @@
-# KhamSap
+# KhamSub
 
 *Thai subtitles with a memory.*
 
@@ -14,7 +14,7 @@ AI model (OpenRouter by default).
 
 You need Python 3.11 or newer.
 
-    cd khamsap
+    cd khamsub
     uv venv --python 3.12 .venv
     uv pip install -r requirements.txt
     source .venv/bin/activate

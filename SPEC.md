@@ -1,6 +1,6 @@
 ### PROJECT GOAL
 
-KhamSap ("Thai subtitles with a memory") is a lightweight personal CLI tool (Arch Linux,
+KhamSub ("Thai subtitles with a memory") is a lightweight personal CLI tool (Arch Linux,
 Python 3.11+) that translates English .srt subtitle files into Thai using an LLM through
 the OpenRouter API (any OpenAI-compatible endpoint works).
 It replaces my manual copy-paste workflow (see "OLD MANUAL WORKFLOW" at the bottom,

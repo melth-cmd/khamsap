@@ -1,4 +1,4 @@
-Project: KhamSap - "Thai subtitles with a memory". Repo directory: khamsap.
+Project: KhamSub - "Thai subtitles with a memory". Repo directory: khamsub.
 
 ### BUILD ORDER
 
