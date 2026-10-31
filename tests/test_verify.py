@@ -550,6 +550,17 @@ def test_layout_summary_reports_dash_and_proportional_splits():
     assert "1 speaker dash put back" in summary
 
 
+def test_layout_summary_counts_entries_left_merged():
+    merged = FakeResult(1, "อยากไปพบครูแนะแนวที่โรงเรียนไหมล่ะ?")
+    merged.rewrapped = "unrepaired"
+    translated = FakeFile(results=[merged], sources={1: "One.\nTwo."})
+    summary = verify.layout_summary(translated)
+    assert summary == (
+        "Layout repairs: 0 of 1 multi-line entry re-split (0%), "
+        "1 entry left merged (no safe break point)"
+    )
+
+
 def test_layout_summary_counts_extra_lines():
     extra = entry(1, "หนึ่ง\nสอง\nสาม")
     extra.rewrapped = "extra_lines"

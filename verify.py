@@ -368,7 +368,7 @@ def layout_summary(translated: Verifiable) -> str:
     or whether layout.py is silently fixing every second multi-line entry.
     """
     sources = getattr(translated, "sources", {})
-    dash = proportional = extra = dashes = 0
+    dash = proportional = extra = dashes = unrepaired = 0
     multi_line = 0
     for result in translated.results:
         source = sources.get(result.index)
@@ -382,6 +382,8 @@ def layout_summary(translated: Verifiable) -> str:
             proportional += 1
         elif result.rewrapped == "extra_lines":
             extra += 1
+        elif result.rewrapped == "unrepaired":
+            unrepaired += 1
         if result.dashes_restored:
             dashes += 1
 
@@ -405,6 +407,11 @@ def layout_summary(translated: Verifiable) -> str:
         )
     if extra:
         parts.append(f"{_plural(extra, 'entry', 'entries')} with extra lines")
+    if unrepaired:
+        parts.append(
+            f"{_plural(unrepaired, 'entry', 'entries')} left merged "
+            "(no safe break point)"
+        )
     if dashes:
         parts.append(f"{_plural(dashes, 'speaker dash', 'speaker dashes')} put back")
     return "Layout repairs: " + ", ".join(parts)

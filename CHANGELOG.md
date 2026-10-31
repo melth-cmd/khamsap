@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Layout repair no longer splits Thai mid-word. When the model merges a
+  multi-line entry, the re-wrap may only break at a space, and no piece may fall
+  below 35% of its expected length; an entry with no safe break point is left on
+  one line and reported as "left merged" instead of being cut at an arbitrary
+  character. On 16 cached runs this removed every mid-word cut (362 entries per
+  6402 multi-line entries are now left merged, 90% of them short enough to fit a
+  single line).
+
 ## [0.1.0] - 2026-10-30
 
 First public release.

@@ -90,6 +90,11 @@ class TranslatedFile:
         return [result for result in self.results if result.dashes_restored]
 
     @property
+    def merged(self) -> list[EntryResult]:
+        """Entries left on one line because no safe break point existed."""
+        return [result for result in self.results if result.rewrapped == "unrepaired"]
+
+    @property
     def translated(self) -> dict[int, str]:
         return {result.index: result.text for result in self.results}
 

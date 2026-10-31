@@ -16,6 +16,12 @@ Two rules, in order:
    clause boundaries, so this usually lands better than a literal midpoint.
    With three or more source lines it splits at every proportional point.
 
+A proportional split may only break at a space, and no piece may end up much
+shorter than its share: Thai is written without spaces inside words, so a
+character offset would cut a word in half, which is corruption rather than
+formatting. When no space is close enough, the entry is left merged and
+reported as `unrepaired`; that is not a failure, just a line the player wraps.
+
 The dash rule is tried whenever any source line starts with a speaker dash
 (hyphen, en dash, em dash), since a dash is structural wherever it
 appears. Leading placeholders are looked past, because a tag can hide the
@@ -42,6 +48,22 @@ log = logging.getLogger(__name__)
 # The dash characters subtitles use for turn-taking.
 DASHES = "-\u2013\u2014"
 
+# A proportional split must land on a space, and each piece must keep at least
+# this share of its expected length (text length / source lines). Below it the
+# nearest space is too far from the target and the entry is left merged: a
+# lopsided pair of lines is worse than one line the player wraps, and a
+# character offset would cut a Thai word in half. Measured on the 16 cached runs
+# in subs/ (6402 multi-line entries): with 0.35, 333 entries are re-split and 362
+# are left merged, no split lands inside a word or on a bad boundary, and 90% of
+# the merged lines are 40 characters or fewer, so they still fit one line.
+MIN_PIECE_SHARE = 0.35
+
+# Thai marks that cannot start a line (combining marks) or end one (leading
+# vowels and the short-vowel mark). "ก็" ends in ็ by convention and is fine.
+_THAI_COMBINING = set("ัิีึืุู็์่้๊๋")
+_THAI_LEADING_VOWELS = set("เแโใไ")
+
+
 # " -" followed by a non-space: a speaker turn that lost its line break.
 # The lookbehind keeps hyphenated words like "well-known" out of it.
 _DASH_BOUNDARY_RE = re.compile(rf"(?<=\s)[{DASHES}](?=\S)")
@@ -65,7 +87,7 @@ class Layout:
     """The text after re-wrapping, and which rule was used."""
 
     text: str
-    method: str | None = None  # None | "dash" | "proportional" | "extra_lines"
+    method: str | None = None  # None | "dash" | "proportional" | "extra_lines" | "unrepaired"
     dashes_restored: bool = False
 
     @property
@@ -127,9 +149,11 @@ def rewrap(source: str, translated: str) -> Layout:
                 )
 
     points = _proportional_points(source_lines, translated)
+    if points is None:
+        return Layout(translated, "unrepaired")
     pieces = _split_at(translated, points)
-    if pieces is None:
-        return Layout(translated)
+    if pieces is None or not _splits_ok(pieces, translated):
+        return Layout(translated, "unrepaired")
 
     restored = _restore_dashes(pieces, source_lines) if all_dashed else pieces
     return Layout(
@@ -188,13 +212,19 @@ def _restore_dashes(pieces: list[str], source_lines: list[str]) -> list[str]:
     return fixed
 
 
-def _proportional_points(source_lines: list[str], translated: str) -> list[int]:
-    """Character positions in `translated` matching the source's break points."""
+def _proportional_points(source_lines: list[str], translated: str) -> list[int] | None:
+    """Character positions in `translated` matching the source's break points.
+
+    None means no safe set of breaks exists: every point must be a space and no
+    piece may fall below `MIN_PIECE_SHARE` of its expected length. A raw
+    character offset is never used, because it would cut a Thai word in half.
+    """
     lengths = [len(line.strip()) for line in source_lines]
     total = sum(lengths)
     if total == 0 or len(translated) < 2:
-        return []
+        return None
 
+    floor = MIN_PIECE_SHARE * len(translated) / len(source_lines)
     points: list[int] = []
     blocked = _blocked_spans(translated)
     spaces = [
@@ -209,19 +239,37 @@ def _proportional_points(source_lines: list[str], translated: str) -> list[int]:
         consumed += length
         target = consumed / total * len(translated)
         candidates = [index for index in spaces if previous < index < len(translated) - 1]
-        point = (
-            min(candidates, key=lambda index: abs(index - target))
-            if candidates
-            else int(round(target))
-        )
+        if not candidates:
+            return None
+        point = min(candidates, key=lambda index: abs(index - target))
+        if point - previous < floor or len(translated) - point < floor:
+            return None
         # Never cut immediately before whitespace: that piece would come out empty.
         while point < len(translated) - 1 and translated[point].isspace():
             point += 1
-        point = max(point, previous + 1)
         points.append(point)
         previous = point
 
     return points
+
+
+def _splits_ok(pieces: list[str], translated: str) -> bool:
+    """Whether every piece is long enough and ends on a safe character."""
+    if len(pieces) < 2:
+        return False
+    floor = MIN_PIECE_SHARE * len(translated) / len(pieces)
+    if any(len(piece) < floor for piece in pieces):
+        return False
+    return not any(_bad_boundary(piece) for piece in pieces)
+
+
+def _bad_boundary(piece: str) -> bool:
+    """Whether `piece` starts or ends somewhere Thai cannot break."""
+    if piece[:1] in _THAI_COMBINING:
+        return True
+    if piece[-1:] in _THAI_LEADING_VOWELS:
+        return True
+    return piece.endswith("็") and not piece.endswith("ก็")
 
 
 def _blocked_spans(text: str) -> list[tuple[int, int]]:

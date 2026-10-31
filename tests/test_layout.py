@@ -152,21 +152,22 @@ def test_extra_lines_never_restore_dashes():
 def test_dash_rule_skips_when_count_mismatches():
     source = "-A\n-B\n-C"
     result = layout.rewrap(source, "-หนึ่ง -สอง")
-    assert result.method == "proportional"
-    assert result.text.count("\n") == 2
+    assert result.method != "dash"
+    # Two breaks are needed but only one space exists, so it stays merged.
+    assert result.method == "unrepaired"
+    assert result.text == "-หนึ่ง -สอง"
 
 
 # --- rule 2: proportional ---------------------------------------------------
 
 
 def test_proportional_uses_the_source_break_fraction():
-    source = "Short.\nA much longer second line."
-    translated = "สั้น แต่ว่าบรรทัดที่สองยาวกว่ามากทีเดียวนะ"
+    source = "One two three.\nFour five."
+    translated = "หนึ่ง สอง สาม สี่ ห้า"
     result = layout.rewrap(source, translated)
     assert result.method == "proportional"
-    first, second = result.text.split("\n")
-    # First source line is about a quarter of the text, so the split lands early.
-    assert len(first) < len(second)
+    # The first source line is 60% of the entry, so the split lands late.
+    assert result.text == "หนึ่ง สอง สาม\nสี่ ห้า"
 
 
 def test_proportional_splits_three_lines():
@@ -176,11 +177,61 @@ def test_proportional_splits_three_lines():
     assert result.method == "proportional"
 
 
-def test_proportional_falls_back_to_character_split_without_spaces():
-    source = "abcdefghij\nklmnopqrst"
-    result = layout.rewrap(source, "ก" * 20)
-    assert result.text.count("\n") == 1
-    assert len(result.text.replace("\n", "")) == 20
+def test_no_space_at_all_leaves_the_entry_merged():
+    # The real film case [189]: Thai with no space, so a character offset would
+    # cut a word in half. It is left on one line and reported instead.
+    source = "How would you like to go\nsee the school counselor?"
+    translated = "อยากไปพบครูแนะแนวที่โรงเรียนไหมล่ะ?"
+    result = layout.rewrap(source, translated)
+    assert result.text == translated
+    assert result.method == "unrepaired"
+    assert not result.rewrapped
+
+
+def test_a_space_at_the_edge_of_the_text_is_not_used():
+    # A lone speaker dash has a space after it; splitting there would give a
+    # one-character line and put everything else on the other.
+    source = "You are late to the party\nwhen you are good at it."
+    translated = "‐ มาสายปาร์ตี้ฉันได้เก่งจริงนะพวกเธอ"
+    result = layout.rewrap(source, translated)
+    assert result.text == translated
+    assert result.method == "unrepaired"
+
+
+def test_an_unbalanced_space_is_not_used():
+    source = "Short.\nA much longer second line."
+    translated = "สั้น แต่ว่าบรรทัดที่สองยาวกว่ามากทีเดียวนะ"
+    result = layout.rewrap(source, translated)
+    assert result.text == translated
+    assert result.method == "unrepaired"
+
+
+def test_the_second_real_film_case_is_left_merged():
+    # Film case [204]: 44 Thai characters with no space at all.
+    source = "We heard them from Mr. Garrison\na few times before."
+    translated = "เราเคยได้ยินจากคุณการ์ริสันมาสองสามครั้งแล้ว"
+    result = layout.rewrap(source, translated)
+    assert result.text == translated
+    assert result.method == "unrepaired"
+
+
+def test_a_line_may_not_start_with_a_combining_mark():
+    result = layout.rewrap("One.\nTwo.", "หนึ่ง ัสอง")
+    assert result.text == "หนึ่ง ัสอง"
+    assert result.method == "unrepaired"
+
+
+def test_a_line_may_not_end_with_a_leading_vowel():
+    result = layout.rewrap("One.\nTwo.", "ไปเ กลับบ้าน")
+    assert result.text == "ไปเ กลับบ้าน"
+    assert result.method == "unrepaired"
+
+
+def test_a_line_may_end_with_the_word_ko():
+    # "ก็" ends in ็ by convention, so it is a legal end of line.
+    result = layout.rewrap("One.\nTwo.", "เราก็ ไป")
+    assert result.method == "proportional"
+    assert result.text.split("\n")[0].endswith("ก็")
 
 
 def test_proportional_never_returns_empty_pieces():

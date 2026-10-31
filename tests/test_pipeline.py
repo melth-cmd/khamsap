@@ -455,6 +455,18 @@ def test_merged_model_output_is_rewrapped():
     assert result.failures == []
 
 
+def test_merged_output_without_a_space_is_reported_not_cut():
+    from conftest import FakeClient
+
+    client = FakeClient(["[1] อยากไปพบครูแนะแนวที่โรงเรียนไหมล่ะ?"])
+    result = run(client, [subtitle(1, "One.\nTwo.")])
+    assert result.subtitles[0].content == "อยากไปพบครูแนะแนวที่โรงเรียนไหมล่ะ?"
+    assert result.results[0].rewrapped == "unrepaired"
+    assert [r.index for r in result.merged] == [1]
+    assert result.rewrapped == []
+    assert result.failures == []
+
+
 def test_dash_speakers_are_split_at_the_dash():
     from conftest import FakeClient
 
