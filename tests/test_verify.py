@@ -137,6 +137,33 @@ def test_leftover_english_covered_by_a_term_is_left_to_the_glossary_check():
     assert flags == []
 
 
+def test_leftover_english_allows_a_short_letter_digit_code():
+    assert verify.leftover_english(1, "K9 barks.", "K9 เห่า", []) == []
+
+
+def test_leftover_english_allows_a_link_and_a_handle():
+    source = "See https://example.com/x or @flymiamibro22"
+    translated = "ดู https://example.com/x หรือ @flymiamibro22"
+    assert verify.leftover_english(1, source, translated, []) == []
+
+
+def test_leftover_english_still_flags_a_name_left_in_english():
+    flags = verify.leftover_english(1, "MAYA: okay.", "MAYA: โอเค", [])
+    assert [flag.kind for flag in flags] == ["english_left"]
+    assert "MAYA" in flags[0].message
+
+
+def test_a_lost_number_is_flagged():
+    flags = verify.check_entry(1, '"Pen15"', '"เพนฟิฟทีน"')
+    kinds = [flag.kind for flag in flags]
+    assert kinds == ["lost_token"]
+    assert "15" in flags[0].message
+
+
+def test_a_kept_number_is_not_flagged():
+    assert verify.check_entry(1, '"Pen15"', '"เพน15"') == []
+
+
 def test_leftover_english_ignores_words_inside_tags():
     assert verify.leftover_english(1, "Hello.", "<i>สวัสดี</i>", []) == []
 

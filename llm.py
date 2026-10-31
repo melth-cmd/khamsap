@@ -30,7 +30,7 @@ from batcher import Batch, ContextLine, SourceEntry
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 3
 DEFAULT_KEY_ENV = "OPENROUTER_API_KEY"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -82,7 +82,7 @@ class Issue:
     kind: str
     # parsing:  "duplicate" | "empty"
     # identity: "missing" | "extra"
-    # language: "missing_thai" | "foreign_script"
+    # language: "missing_thai" | "foreign_script" | "lost_token"
     # tags:     "tag_mismatch"
     # other:    "bad_response"
     index: int | None
@@ -202,6 +202,76 @@ def is_non_verbal(text: str) -> bool:
     )
 
 
+# --- tokens that must survive translation -----------------------------------
+#
+# The transliteration policy turns Latin into Thai, so the few Latin tokens that
+# are not translated need protecting: links, handles, e-mail and letter-digit
+# codes. A short code stays as written; a longer one has its letters
+# transliterated and only its digits must come through.
+
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>\"')]+", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_HANDLE_RE = re.compile(r"@[A-Za-z0-9_]{2,}")
+_DIGITS_RE = re.compile(r"\d+")
+# Letters and digits mixed in one token: K9, 21L4, Flymiamibro22.
+_MIXED_RE = re.compile(
+    r"(?<![A-Za-z0-9])"
+    r"(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Za-z])"
+    r"[A-Za-z0-9]{2,}"
+    r"(?![A-Za-z0-9])"
+)
+
+# Letter-digit tokens shorter than this stay in Latin; longer ones are
+# transliterated and only their digits have to survive (Flymiamibro22).
+KEPT_CODE_MIN_LENGTH = 5
+
+
+def _token_text(text: str) -> str:
+    """Text with tags and placeholders removed, brackets and words kept."""
+    return tags.strip_markup(text)
+
+
+def kept_verbatim(text: str) -> list[str]:
+    """Latin tokens the translation must contain unchanged, in order."""
+    cleaned = _token_text(text)
+    found: list[str] = []
+    for pattern in (_URL_RE, _EMAIL_RE, _HANDLE_RE):
+        for match in pattern.finditer(cleaned):
+            found.append(match.group(0))
+    for match in _MIXED_RE.finditer(cleaned):
+        token = match.group(0)
+        if len(token) < KEPT_CODE_MIN_LENGTH:
+            found.append(token)
+    return found
+
+
+def must_keep_digits(text: str) -> list[str]:
+    """Digit runs that must come through: every number, and long codes."""
+    cleaned = _token_text(text)
+    found = list(_DIGITS_RE.findall(cleaned))
+    for match in _MIXED_RE.finditer(cleaned):
+        if len(match.group(0)) >= KEPT_CODE_MIN_LENGTH:
+            found.extend(_DIGITS_RE.findall(match.group(0)))
+    unique: list[str] = []
+    for value in found:
+        if value not in unique:
+            unique.append(value)
+    return unique
+
+
+def missing_kept(source: str, translated: str) -> list[str]:
+    """Tokens or digits from `source` that `translated` lost, in order."""
+    cleaned = _token_text(translated)
+    missing: list[str] = []
+    for token in kept_verbatim(source):
+        if token not in cleaned and token not in missing:
+            missing.append(token)
+    for digits in must_keep_digits(source):
+        if digits not in cleaned and digits not in missing:
+            missing.append(digits)
+    return missing
+
+
 def validate(batch: Batch, decoded: Decoded) -> list[Issue]:
     """Check a parsed reply against the batch that asked for it.
 
@@ -241,6 +311,16 @@ def validate(batch: Batch, decoded: Decoded) -> list[Issue]:
                     )
                 )
 
+        lost = missing_kept(source, text)
+        if lost:
+            issues.append(
+                Issue(
+                    "lost_token",
+                    index,
+                    f"entry [{index}] lost {'/'.join(lost)} from the translation",
+                )
+            )
+
         for tag_issue in tags.check(source, text):
             issues.append(
                 Issue("tag_mismatch", index, f"entry [{index}]: {tag_issue.message}")
@@ -268,6 +348,26 @@ Rules:
 - Subtitles are read quickly: be concise.
 - Thai subtitle convention: spaces instead of commas and periods.
 - Use the story bible for pronouns, particles and register per speaker.
+- Write everything in Thai script. Translate or transliterate names, nicknames, brands,
+  song and film titles, speaker labels and acronyms; leave no English word untranslated.
+- A speaker label keeps its colon and stays on the same line as the words it introduces:
+  "MAYA: No." is one line and becomes "เมย่า: ไม่" — never put the label alone on a line.
+- Keep each entry's line count exactly. If the source entry has two lines, the translation
+  has two lines: never merge them, never add a line the source did not have, and never put
+  a lone dash on its own line.
+- Transliterate the way a Thai speaker would say it, and use a settled Thai spelling when
+  one exists (Chanel -> ชาแนล, Swarovski -> สวารอฟสกี้).
+- A title of another work: use its official Thai title only if you are certain of it,
+  otherwise transliterate the title. Never invent an official-sounding title.
+- Acronyms: spell the letters when people say the letters (AOL -> เอโอเอล, JBL -> เจบีแอล,
+  FBI agent -> เอฟบีไอ เอเจนต์); read it as a word when that is how it is said
+  (AIM -> เอม, NASA -> นาซา).
+- Numbers stay exactly as written: 1, 2, 1,000, 06:00, 5%. Never spell a digit as a word
+  (15 stays 15, so Pen15 -> เพน15, not เพนฟิฟทีน). Keep URLs, e-mail addresses and
+  @handles unchanged.
+- A token mixing letters and digits: keep it as written when it is shorter than 5
+  characters (K191, K9, 3B); when it has 5 characters or more, transliterate its letters
+  and keep its digits (Flymiamibro22 -> ฟลายมยเอมีโบร22).
 - Follow the glossary exactly: a term marked "keep" stays in English; for "transliterate"
   or "translate", use the Thai given after the colon every time.
 - Translate song lyrics for meaning; keep the music markers.
@@ -275,9 +375,6 @@ Rules:
 - Idioms: translate the meaning, not the words.
 - On-screen text and sound effects: translate them, keep the brackets.
 - Never merge or split entries. One input ID = one output ID.
-- Preserve the line breaks inside an entry: if the source entry has two lines, the
-  translation must have two lines. Never merge lines, and never add a line that the
-  source did not have.
 - Lines under CONTEXT are for understanding only and must not appear in your output.
 - Placeholders such as {0} are formatting tags: keep every one, exactly once, in place.
 """
@@ -298,8 +395,9 @@ def _format_context(lines: Sequence[ContextLine], include_thai: bool) -> str:
 FIX_RULES = """\
 This is a correction pass. A checker flagged every line below in an earlier attempt,
 so translate each of them again from scratch, with extra care:
-- Every entry must be natural Thai. No other language, and no English except glossary
-  words marked "keep".
+- Every entry must be natural Thai. No other language, and no English except numbers,
+  URLs, @handles and short letter-digit codes such as K9.
+- Transliterate names, brands, labels and acronyms instead of keeping them in English.
 - Use the glossary spelling exactly as given for every term that appears.
 - Keep every [ID] exactly once, in the same order, and keep each entry's number of lines.
 - Keep every placeholder such as {0} exactly once, in its place.

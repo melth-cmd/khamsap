@@ -229,11 +229,12 @@ Report:
   will name them.
 - terms: names, places, brands, titles, ranks and technical words that must be
   spelled the same way every time. Give each one an action:
-  "keep" (stays in English: brands, acronyms, words the audience knows),
-  "transliterate" (Thai phonetic spelling in th) or
-  "translate" (Thai meaning in th).
-  Prefer "keep" only for things a Thai audience would recognise in English;
-  otherwise transliterate. Leave `th` empty for "keep".
+  "transliterate" (Thai phonetic spelling in th), "translate" (Thai meaning in
+  th) or "keep" (stays in English).
+  Transliterate by default: names, brands and titles all end up in Thai script,
+  because a Thai audience reads Thai. Use "translate" for a title with a known
+  Thai name. Reserve "keep" for numbers, URLs, @handles and short letter-digit
+  codes such as K9. Leave `th` empty for "keep".
 
 Reply with one JSON object and nothing else, exactly in this shape:
 {"summary": "...", "notes": "...", "characters": [{"name": "...", "gender": "male", "age": "40s", "role": "...", "relationships": "...", "register": "..."}], "terms": [{"en": "...", "action": "transliterate", "th": "..."}]}

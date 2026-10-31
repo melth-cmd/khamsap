@@ -7,6 +7,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Transliteration policy: names, nicknames, brands, song and film titles, speaker
+  labels and acronyms are now rendered in Thai. A speaker label keeps its colon
+  and stays on its words (`MAYA: No.` -> `เมย่า: ไม่`).
+- `lost_token` check: a number, URL, @handle or short letter-digit code (under 5
+  characters, e.g. `K9`) that the translation drops is a retryable failure and a
+  report flag. A longer code keeps its digits and transliterates its letters
+  (`Flymiamibro22` -> `ฟลายมยเอมีโบร22`).
+
+### Changed
+
+- `english_left` is strict: only links, handles and short codes may stay Latin,
+  so a name or label left in English is now reported as a mistake instead of
+  being excused by the glossary keep-list.
+- Prompt version 3: transliteration rules, digit preservation, the label rule and
+  the official-title rule; the bible now asks for transliterations by default.
+
 ### Fixed
 
 - Layout repair no longer splits Thai mid-word. When the model merges a

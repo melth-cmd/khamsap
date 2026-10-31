@@ -14,9 +14,11 @@ Flag kinds:
   line_count           a different number of lines than the source
   dashes_lost          a speaker dash the source had is gone
   tag_mismatch         formatting tags are missing or invented
+  lost_token           a number, link or short code from the source is missing
   glossary_missing     a glossary term is not rendered as the glossary says
   glossary_inconsistent  a term that should be Thai is still in English
-  english_left         English words that are not a glossary "keep" term
+  english_left         English left in the translation (a mistake, except for
+                       links, handles and short letter-digit codes)
 
 Non-verbal sources ("Mm-hmm", "[MUSIC PLAYING]") are only checked for being
 empty: they are allowed to come back untranslated.
@@ -49,6 +51,7 @@ KINDS: tuple[str, ...] = (
     "line_count",
     "dashes_lost",
     "tag_mismatch",
+    "lost_token",
     "glossary_missing",
     "glossary_inconsistent",
     "english_left",
@@ -218,7 +221,12 @@ def leftover_english(
     name that should have been transliterated is reported once, not twice.
     """
     covered = {term.en.casefold() for term in terms}
-    words = [word for word in english_words(translated) if word.casefold() not in covered]
+    # Links, handles and letter-digit codes stay Latin on purpose, so they are
+    # not leftover English; drop them before looking for words.
+    allowed = translated
+    for token in llm.kept_verbatim(translated):
+        allowed = allowed.replace(token, " ")
+    words = [word for word in english_words(allowed) if word.casefold() not in covered]
     if not words:
         return []
     return [
@@ -297,6 +305,18 @@ def check_entry(
     tag_problem = tag_mismatch(source, translated)
     if tag_problem:
         flags.append(Flag(index, "tag_mismatch", tag_problem, source, translated))
+
+    lost = llm.missing_kept(source, translated)
+    if lost:
+        flags.append(
+            Flag(
+                index,
+                "lost_token",
+                "number or code missing from the translation: " + ", ".join(lost),
+                source,
+                translated,
+            )
+        )
 
     flags.extend(glossary_flags(index, source, translated, terms))
     flags.extend(leftover_english(index, source, translated, terms))

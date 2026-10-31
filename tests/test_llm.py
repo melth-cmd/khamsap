@@ -146,6 +146,33 @@ def test_system_prompt_states_the_core_rules():
     assert "{0}" in prompt
 
 
+def test_system_prompt_asks_for_transliteration():
+    prompt = llm.SYSTEM_PROMPT
+    assert "Write everything in Thai script" in prompt
+    assert "เมย่า: ไม่" in prompt  # a label keeps its colon
+    assert "ฟลายมยเอมีโบร22" in prompt
+
+
+def test_system_prompt_keeps_numbers_and_links_verbatim():
+    prompt = llm.SYSTEM_PROMPT
+    assert "Numbers stay exactly as written" in prompt
+    assert "@handles" in prompt
+
+
+def test_system_prompt_states_the_alphanumeric_threshold():
+    prompt = llm.SYSTEM_PROMPT
+    assert "shorter than 5" in prompt
+    assert "K191" in prompt
+
+
+def test_system_prompt_allows_an_official_title_but_forbids_inventing_one():
+    assert "Never invent an official-sounding title" in llm.SYSTEM_PROMPT
+
+
+def test_prompt_version_covers_the_transliteration_policy():
+    assert llm.PROMPT_VERSION >= 2
+
+
 # --- api key ----------------------------------------------------------------
 
 
@@ -373,7 +400,9 @@ def test_live_smoke_translates_three_entries():
 def test_system_prompt_states_the_line_count_rule():
     prompt = llm.SYSTEM_PROMPT
     assert "two lines" in prompt
-    assert "line breaks" in prompt.lower()
+    assert "line count" in prompt
+    # A label must not be pushed onto a line of its own.
+    assert "never put the label alone on a line" in prompt
 
 
 def test_strict_messages_add_the_correction_rules():
@@ -450,3 +479,60 @@ def test_no_extra_headers_means_no_default_headers(monkeypatch):
 )
 def test_looks_like_key(value, expected):
     assert llm.looks_like_key(value) is expected
+
+
+# --- tokens that must survive translation -----------------------------------
+
+
+def test_kept_verbatim_lists_links_handles_and_short_codes():
+    source = "See https://example.com/x @flymiamibro22 or mail a@b.example, K9, 3B."
+    kept = llm.kept_verbatim(source)
+    assert "https://example.com/x" in kept
+    assert "@flymiamibro22" in kept
+    assert "a@b.example" in kept
+    assert "K9" in kept
+    assert "3B" in kept
+
+
+def test_a_long_letter_digit_code_is_not_kept_verbatim():
+    assert llm.kept_verbatim("Flymiamibro22") == []
+    assert llm.kept_verbatim("21L4") == ["21L4"]  # 4 characters stays Latin
+
+
+def test_must_keep_digits_lists_every_number_and_the_digits_of_a_long_code():
+    assert llm.must_keep_digits("06:00") == ["06", "00"]
+    assert llm.must_keep_digits("Flymiamibro22") == ["22"]
+    assert llm.must_keep_digits("seventh grade") == []
+
+
+def test_a_digit_spelled_as_a_word_is_reported():
+    assert llm.missing_kept('"Pen15"', '"เพนฟิฟทีน"') == ["15"]
+    assert llm.missing_kept('"Pen15"', '"เพน15"') == []
+
+
+def test_a_short_code_must_come_back_as_written():
+    assert llm.missing_kept("K9", "เค9") == ["K9"]
+    assert llm.missing_kept("K9", "K9") == []
+
+
+def test_a_link_must_come_back_unchanged():
+    source = "https://example.com/x"
+    assert llm.missing_kept(source, "ดูที่ https://example.com/x") == []
+    assert llm.missing_kept(source, "ดูที่ example.com") == [source]
+
+
+def test_validate_reports_a_lost_number():
+    from batcher import make_batches, SourceEntry
+
+    batch = make_batches([SourceEntry(1, '"Pen15"')], size=1)[0]
+    decoded = llm.decode_entries('[1] "เพนฟิฟทีน"')
+    kinds = [issue.kind for issue in llm.validate(batch, decoded)]
+    assert "lost_token" in kinds
+
+
+def test_validate_accepts_a_kept_number():
+    from batcher import make_batches, SourceEntry
+
+    batch = make_batches([SourceEntry(1, '"Pen15"')], size=1)[0]
+    decoded = llm.decode_entries('[1] "เพน15"')
+    assert llm.validate(batch, decoded) == []
